@@ -20,8 +20,11 @@ pip install cupy-cuda12x==12.0.0 triton==3.2.0
 # TODOs
  * Test setup on remote gpu machine
  * Have a way to log time, so we can compare later
+ * Ask about inconsistency between PDF decription of question 1.2 output and the one in the README
  * Construct a JSON (or JSONs) with the test data required
  * Do CuPy and Triton implementations so we can compare
+ * Maybe do a NumPy implementation so we can check against CPU (probably different results from CPU PyTorch)
+ * Investigate pytorch solution, as it is very inneficient when compared to the one using inbuild functions
  * Do writeup
 
 # Task 1

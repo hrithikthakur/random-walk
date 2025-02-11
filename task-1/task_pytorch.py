@@ -12,6 +12,7 @@ from test import testdata_kmeans, testdata_knn, testdata_ann
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda", help="Select device: cpu or cuda")
+parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="cosine", help="Select what distance measure to use: cosine, l2, dot, manhattan")
 args = parser.parse_args()
 device = args.device
 
@@ -37,25 +38,31 @@ def distance_manhattan(X, Y):
 # Task 1.2: KNN Top-K Algorithm (Efficient GPU Implementation)
 # ------------------------------------------------------------------------------------------------
 
-def our_knn(N, D, A, X, K):
+def our_knn(N, D, A, X, K, distance_fn):
     A_torch = torch.tensor(A, device=device)
     X_torch = torch.tensor(X, device=device)
     
-    distances = torch.cdist(A_torch, X_torch.unsqueeze(0), p=2).squeeze()
-    top_k_indices = torch.topk(distances, K, largest=False).indices.cpu().numpy()
+    distances = []
+    for i in range(N):
+        dist = distance_fn(A_torch[i], X_torch)
+        distances.append((dist, i))
+    
+    distances.sort(key=lambda x: x[0])  # Sort by distance
+    top_k_indices = [idx for _, idx in distances[:K]]
+    
     return top_k_indices
 
 # ------------------------------------------------------------------------------------------------
 # Task 2.1: KMeans Algorithm (GPU-Accelerated)
 # ------------------------------------------------------------------------------------------------
 
-def our_kmeans(N, D, A, K, max_iter=100, tol=1e-4):
+def our_kmeans(N, D, A, K, distance_fn, max_iter=100, tol=1e-4):
     A_torch = torch.tensor(A, device=device)
     centroids = A_torch[torch.randperm(N)[:K]]
     
     for _ in range(max_iter):
-        distances = torch.cdist(A_torch, centroids, p=2)
-        labels = torch.argmin(distances, dim=1)
+        distances = torch.stack([torch.tensor([distance_fn(A_torch[i], c) for i in range(N)], device=device) for c in centroids])
+        labels = torch.argmin(distances, dim=0)
         
         new_centroids = torch.stack([A_torch[labels == k].mean(dim=0) for k in range(K)])
         
@@ -65,45 +72,65 @@ def our_kmeans(N, D, A, K, max_iter=100, tol=1e-4):
     
     return labels.cpu().numpy()
 
-# ------------------------------------------------------------------------------------------------
-# Task 2.2: Approximate Nearest Neighbor (ANN) with Clustering
-# ------------------------------------------------------------------------------------------------
 
-def our_ann(N, D, A, X, K, K_clusters=10):
-    labels = our_kmeans(N, D, A, K_clusters)
+
+
+def our_ann(N, D, A, X, K, distance_fn, K_clusters=10):
+    labels = our_kmeans(N, D, A, K_clusters, distance_fn=distance_fn)
     
     X_torch = torch.tensor(X, device=device)
     A_torch = torch.tensor(A, device=device)
     labels_torch = torch.tensor(labels, device=device)
     
-    cluster_id = labels_torch[torch.argmin(torch.cdist(A_torch, X_torch.unsqueeze(0), p=2))]
-    cluster_indices = (labels_torch == cluster_id).nonzero().squeeze()
+    distances = []
+    for i in range(N):
+        dist = distance_fn(A_torch[i], X_torch)
+        distances.append((dist, i, labels[i]))
     
-    distances = torch.cdist(A_torch[cluster_indices], X_torch.unsqueeze(0), p=2).squeeze()
-    top_k_indices = cluster_indices[torch.topk(distances, K, largest=False).indices].cpu().numpy()
+    distances.sort(key=lambda x: x[0])
     
+    cluster_id = distances[0][2]
+    cluster_indices = [idx for _, idx, lbl in distances if lbl == cluster_id]
+    
+    top_k_indices = cluster_indices[:K]
     return top_k_indices
+
 
 # ------------------------------------------------------------------------------------------------
 # Test the Implementations
 # ------------------------------------------------------------------------------------------------
+def process_distance_func(arg):
+    if arg == "cosine":
+        return distance_cosine
+    elif arg == "l2":
+        return "distance_l2"
+    elif arg == "dot":
+        return distance_dot
+    elif arg == "manhattan":
+        return distance_manhattan
+    else:
+        return "ERROR: unknow distance function specified"
+    
 
 def test_kmeans():
     #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, K = testdata_kmeans("")
-    kmeans_result = our_kmeans(N, D, A, K)
+    print("K-Means (task 1) results are:")
+    kmeans_result = our_kmeans(N, D, A, K, process_distance_func(args.dist))
     print(kmeans_result)
 
 def test_knn():
     #N, D, A, X, K = testdata_knn("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, X, K = testdata_knn("")
-    knn_result = our_knn(N, D, A, X, K)
+    knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
+    print("KNN (task 1) results are:")
     print(knn_result)
     
 def test_ann():
     #N, D, A, X, K = testdata_ann("test_file.json") #TODO: aquire or create a JSON file
-    N, D, A, X, K = testdata_knn("")
-    ann_result = our_ann(N, D, A, X, K)
+    N, D, A, X, K = testdata_ann("")
+    ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
+    print("ANN (task 2.2) results are:")
     print(ann_result)
     
 def recall_rate(list1, list2):

@@ -1,11 +1,16 @@
+# NOTE: this implementation is faster, but is using inbuilt pytorch functions, so probably not very good :/
+# NOTE: useful as a target though
+
 import torch
-import cupy as cp
-import triton
+#import cupy as cp
+#import triton
+#import triton.language as tl
 import numpy as np
 import time
 import json
 import argparse
 from test import testdata_kmeans, testdata_knn, testdata_ann
+#Note: probably don't need every import in every version of the code 
 
 # Parse command line arguments
 parser = argparse.ArgumentParser()
@@ -15,57 +20,75 @@ args = parser.parse_args()
 device = args.device
 
 print(f"Using device: {device}")
-# ------------------------------------------------------------------------------------------------
-# Your Task 1.1 code here
-# ------------------------------------------------------------------------------------------------
 
-# You can create any kernel here
-# def distance_kernel(X, Y, D):
-#     pass
+# ------------------------------------------------------------------------------------------------
+# Task 1.1: Distance Functions (Implemented with GPU acceleration)
+# ------------------------------------------------------------------------------------------------
 
 def distance_cosine(X, Y):
-    pass
+    return 1 - torch.dot(X.to(device), Y.to(device)) / (torch.norm(X.to(device)) * torch.norm(Y.to(device)))
 
 def distance_l2(X, Y):
-    pass
+    return torch.norm(X.to(device) - Y.to(device), p=2)
 
 def distance_dot(X, Y):
-    pass
+    return torch.dot(X.to(device), Y.to(device))
 
 def distance_manhattan(X, Y):
-    pass
+    return torch.norm(X.to(device) - Y.to(device), p=1)
 
 # ------------------------------------------------------------------------------------------------
-# Your Task 1.2 code here
+# Task 1.2: KNN Top-K Algorithm (Efficient GPU Implementation)
 # ------------------------------------------------------------------------------------------------
 
-# You can create any kernel here
 
-def our_knn(N, D, A, X, K):
-    pass
-
-# ------------------------------------------------------------------------------------------------
-# Your Task 2.1 code here
-# ------------------------------------------------------------------------------------------------
-
-# You can create any kernel here
-# def distance_kernel(X, Y, D):
-#     pass
-
-def our_kmeans(N, D, A, K):
-    pass
+def our_knn(N, D, A, X, K, distance_fn):
+    A_torch = torch.tensor(A, device=device)
+    X_torch = torch.tensor(X, device=device)
+    
+    distances = torch.cdist(A_torch, X_torch.unsqueeze(0), p=2).squeeze()
+    top_k_indices = torch.topk(distances, K, largest=False).indices.cpu().numpy()
+    return top_k_indices
 
 # ------------------------------------------------------------------------------------------------
-# Your Task 2.2 code here
+# Task 2.1: KMeans Algorithm (GPU-Accelerated)
 # ------------------------------------------------------------------------------------------------
 
-# You can create any kernel here
+def our_kmeans(N, D, A, K, distance_fn, max_iter=100, tol=1e-4):
+    A_torch = torch.tensor(A, device=device)
+    centroids = A_torch[torch.randperm(N)[:K]]
+    
+    for _ in range(max_iter):
+        distances = torch.cdist(A_torch, centroids, p=2)
+        labels = torch.argmin(distances, dim=1)
+        
+        new_centroids = torch.stack([A_torch[labels == k].mean(dim=0) for k in range(K)])
+        
+        if torch.norm(new_centroids - centroids) < tol:
+            break
+        centroids = new_centroids
+    
+    return labels.cpu().numpy()
 
-def our_ann(N, D, A, X, K):
-    pass
+
+
+def our_ann(N, D, A, X, K, distance_fn, K_clusters=10):
+    labels = our_kmeans(N, D, A, K_clusters, distance_fn)
+    
+    X_torch = torch.tensor(X, device=device)
+    A_torch = torch.tensor(A, device=device)
+    labels_torch = torch.tensor(labels, device=device)
+    
+    cluster_id = labels_torch[torch.argmin(torch.cdist(A_torch, X_torch.unsqueeze(0), p=2))]
+    cluster_indices = (labels_torch == cluster_id).nonzero().squeeze()
+    
+    distances = torch.cdist(A_torch[cluster_indices], X_torch.unsqueeze(0), p=2).squeeze()
+    top_k_indices = cluster_indices[torch.topk(distances, K, largest=False).indices].cpu().numpy()
+    
+    return top_k_indices
 
 # ------------------------------------------------------------------------------------------------
-# Test your code here
+# Test the Implementations
 # ------------------------------------------------------------------------------------------------
 def process_distance_func(arg):
     if arg == "cosine":
@@ -79,6 +102,7 @@ def process_distance_func(arg):
     else:
         return "ERROR: unknow distance function specified"
     
+
 def test_kmeans():
     #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, K = testdata_kmeans("")
