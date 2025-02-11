@@ -21,6 +21,8 @@ pip install cupy-cuda12x==12.0.0 triton==3.2.0
  * Test setup on remote gpu machine
  * Have a way to log time, so we can compare later
  * Construct a JSON (or JSONs) with the test data required
+ * Do CuPy and Triton implementations so we can compare
+ * Do writeup
 
 # Task 1
 
