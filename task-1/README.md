@@ -1,3 +1,27 @@
+# Setup instructions
+
+## Using conda (for Windows and MacOS (no Triton))
+```
+conda create -n mls_project python=3.9.13 -y
+conda activate mls_project
+conda install pytorch=2.3.1 torchvision=0.18.1 torchaudio=2.3.1 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+pip install cupy-cuda12x==12.0.0
+```
+Note: Triton is only suported in linux, so we cannot install Triton or run associated code :(
+
+## Using conda (for linux (with Triton)
+```
+conda create -n mls_project python=3.9.13 -y
+conda activate mls_project
+conda install pytorch=2.3.1 torchvision=0.18.1 torchaudio=2.3.1 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+pip install cupy-cuda12x==12.0.0 triton==3.2.0
+```
+
+# TODOs
+ * Test setup on remote gpu machine
+ * Have a way to log time, so we can compare later
+ * Construct a JSON (or JSONs) with the test data required
+
 # Task 1
 
 ## Part 1: KNN

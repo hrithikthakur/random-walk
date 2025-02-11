@@ -4,7 +4,14 @@ import triton
 import numpy as np
 import time
 import json
+import argparse
 from test import testdata_kmeans, testdata_knn, testdata_ann
+
+# Parse command line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda", help="Select device: cpu or cuda")
+args = parser.parse_args()
+device = args.device
 # ------------------------------------------------------------------------------------------------
 # Your Task 1.1 code here
 # ------------------------------------------------------------------------------------------------
@@ -84,3 +91,4 @@ def recall_rate(list1, list2):
 
 if __name__ == "__main__":
     test_kmeans()
+    #I assume the other tests should go here as well (-Darius)
