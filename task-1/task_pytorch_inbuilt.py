@@ -10,7 +10,7 @@ import time
 import json
 import argparse
 from test import testdata_kmeans, testdata_knn, testdata_ann
-#Note: probably don't need every import in every version of the code 
+#Note: probably don't need every import in every version of the code
 
 # Parse command line arguments
 parser = argparse.ArgumentParser()
@@ -45,7 +45,7 @@ def distance_manhattan(X, Y):
 def our_knn(N, D, A, X, K, distance_fn):
     A_torch = torch.tensor(A, device=device)
     X_torch = torch.tensor(X, device=device)
-    
+
     distances = torch.cdist(A_torch, X_torch.unsqueeze(0), p=2).squeeze()
     top_k_indices = torch.topk(distances, K, largest=False).indices.cpu().numpy()
     return top_k_indices
@@ -57,34 +57,34 @@ def our_knn(N, D, A, X, K, distance_fn):
 def our_kmeans(N, D, A, K, distance_fn, max_iter=100, tol=1e-4):
     A_torch = torch.tensor(A, device=device)
     centroids = A_torch[torch.randperm(N)[:K]]
-    
+
     for _ in range(max_iter):
         distances = torch.cdist(A_torch, centroids, p=2)
         labels = torch.argmin(distances, dim=1)
-        
+
         new_centroids = torch.stack([A_torch[labels == k].mean(dim=0) for k in range(K)])
-        
+
         if torch.norm(new_centroids - centroids) < tol:
             break
         centroids = new_centroids
-    
+
     return labels.cpu().numpy()
 
 
 
 def our_ann(N, D, A, X, K, distance_fn, K_clusters=10):
     labels = our_kmeans(N, D, A, K_clusters, distance_fn)
-    
+
     X_torch = torch.tensor(X, device=device)
     A_torch = torch.tensor(A, device=device)
     labels_torch = torch.tensor(labels, device=device)
-    
+
     cluster_id = labels_torch[torch.argmin(torch.cdist(A_torch, X_torch.unsqueeze(0), p=2))]
     cluster_indices = (labels_torch == cluster_id).nonzero().squeeze()
-    
+
     distances = torch.cdist(A_torch[cluster_indices], X_torch.unsqueeze(0), p=2).squeeze()
     top_k_indices = cluster_indices[torch.topk(distances, K, largest=False).indices].cpu().numpy()
-    
+
     return top_k_indices
 
 # ------------------------------------------------------------------------------------------------
@@ -101,7 +101,7 @@ def process_distance_func(arg):
         return distance_manhattan
     else:
         return "ERROR: unknow distance function specified"
-    
+
 
 def test_kmeans():
     #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
@@ -116,14 +116,14 @@ def test_knn():
     knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
     print("KNN (task 1) results are:")
     print(knn_result)
-    
+
 def test_ann():
     #N, D, A, X, K = testdata_ann("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, X, K = testdata_ann("")
     ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
-    
+
 def recall_rate(list1, list2):
     """
     Calculate the recall rate of two lists
@@ -131,6 +131,11 @@ def recall_rate(list1, list2):
     return len(set(list1) & set(list2)) / len(list1)
 
 if __name__ == "__main__":
-    test_kmeans()
-    test_knn()
-    test_ann()
+    # Define tests to run.
+    tests = [test_kmeans, test_knn, test_ann]
+
+    # Run tests and measure time taken.
+    for callable in tests:
+        start = time.time()
+        callable()
+        print(f"=== {callable.__name__}() completed in {time.time() - start:.4f} seconds ===\n")
