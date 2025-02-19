@@ -15,7 +15,7 @@ from test import testdata_kmeans, testdata_knn, testdata_ann
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda", help="Select device: cpu or cuda")
-parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="cosine", help="Select what distance measure to use: cosine, l2, dot, manhattan")
+parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="l2", help="Select what distance measure to use: cosine, l2, dot, manhattan")
 args = parser.parse_args()
 device = args.device
 
@@ -26,16 +26,16 @@ print(f"Using device: {device}")
 # ------------------------------------------------------------------------------------------------
 
 def distance_cosine(X, Y):
-    return 1 - torch.dot(X.to(device), Y.to(device)) / (torch.norm(X.to(device)) * torch.norm(Y.to(device)))
+    return 1 - (torch.sum(X * Y) / (torch.sqrt(torch.sum(X ** 2)) * torch.sqrt(torch.sum(Y ** 2))))
 
 def distance_l2(X, Y):
-    return torch.norm(X.to(device) - Y.to(device), p=2)
+    return torch.norm(X - Y, p=2)
 
 def distance_dot(X, Y):
-    return torch.dot(X.to(device), Y.to(device))
+    return torch.dot(X, Y)
 
 def distance_manhattan(X, Y):
-    return torch.norm(X.to(device) - Y.to(device), p=1)
+    return torch.norm(X - Y, p=1)
 
 # ------------------------------------------------------------------------------------------------
 # Task 1.2: KNN Top-K Algorithm (Efficient GPU Implementation)
@@ -94,7 +94,7 @@ def process_distance_func(arg):
     if arg == "cosine":
         return distance_cosine
     elif arg == "l2":
-        return "distance_l2"
+        return distance_l2
     elif arg == "dot":
         return distance_dot
     elif arg == "manhattan":
