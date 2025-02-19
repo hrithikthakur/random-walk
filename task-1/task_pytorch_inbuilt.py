@@ -42,7 +42,7 @@ def distance_manhattan(X, Y):
 # ------------------------------------------------------------------------------------------------
 
 
-def our_knn(N, D, A, X, K, distance_fn):
+def our_knn(N, D, A, X, K):
     A_torch = torch.tensor(A, device=device)
     X_torch = torch.tensor(X, device=device)
 
@@ -54,7 +54,9 @@ def our_knn(N, D, A, X, K, distance_fn):
 # Task 2.1: KMeans Algorithm (GPU-Accelerated)
 # ------------------------------------------------------------------------------------------------
 
-def our_kmeans(N, D, A, K, distance_fn, max_iter=100, tol=1e-4):
+def our_kmeans(N, D, A, K):
+    max_iter = 100
+    tol = 1e-4
     A_torch = torch.tensor(A, device=device)
     centroids = A_torch[torch.randperm(N)[:K]]
 
@@ -72,21 +74,37 @@ def our_kmeans(N, D, A, K, distance_fn, max_iter=100, tol=1e-4):
 
 
 
-def our_ann(N, D, A, X, K, distance_fn, K_clusters=10):
-    labels = our_kmeans(N, D, A, K_clusters, distance_fn)
+def our_ann(N, D, A, X, K, device='cpu'):
+    # Convert inputs to PyTorch tensors
+    A_torch = torch.as_tensor(A, device=device).clone().detach().reshape(N, D)
+    X_torch = torch.as_tensor(X, device=device).reshape(1, D)  # Ensure X is 2D for cdist
 
-    X_torch = torch.tensor(X, device=device)
-    A_torch = torch.tensor(A, device=device)
-    labels_torch = torch.tensor(labels, device=device)
+    # Assuming our_kmeans is a function that returns cluster labels
+    labels = torch.tensor(our_kmeans(N, D, A_torch, K), device=device)  # Convert labels to PyTorch tensor
 
-    cluster_id = labels_torch[torch.argmin(torch.cdist(A_torch, X_torch.unsqueeze(0), p=2))]
-    cluster_indices = (labels_torch == cluster_id).nonzero().squeeze()
+    # Compute centroids
+    centroids = torch.stack([A_torch[labels == k].mean(dim=0) if (labels == k).any() else torch.zeros(D, device=device) for k in range(K)])
+    
+    # Step 2: Find the nearest cluster center to X
+    centroid_distances = torch.cdist(X_torch, centroids).squeeze(0)  # Pairwise distances between X and centroids
+    nearest_cluster_index = torch.argmin(centroid_distances)
 
-    distances = torch.cdist(A_torch[cluster_indices], X_torch.unsqueeze(0), p=2).squeeze()
-    top_k_indices = cluster_indices[torch.topk(distances, K, largest=False).indices].cpu().numpy()
+    # Step 3: Find the second nearest cluster center (different from the nearest)
+    centroid_distances[nearest_cluster_index] = float('inf')  # Mask the nearest cluster
+    second_nearest_cluster_index = torch.argmin(centroid_distances)
 
-    return top_k_indices
+    # Step 4: Merge vectors from both clusters (K1 and K2)
+    cluster_1_indices = (labels == nearest_cluster_index).nonzero(as_tuple=True)[0]
+    cluster_2_indices = (labels == second_nearest_cluster_index).nonzero(as_tuple=True)[0]
+    candidate_indices = torch.cat([cluster_1_indices, cluster_2_indices])
 
+    # Step 5: Find the top-K nearest neighbors among these candidates
+    candidate_vectors = A_torch[candidate_indices]
+    candidate_distances = torch.cdist(X_torch, candidate_vectors).squeeze(0)  # Pairwise distances between X and candidates
+    _, top_k_indices = torch.topk(candidate_distances, K, largest=False)
+
+    # Return final top-K nearest neighbor indices
+    return candidate_indices[top_k_indices]
 # ------------------------------------------------------------------------------------------------
 # Test the Implementations
 # ------------------------------------------------------------------------------------------------
@@ -106,21 +124,21 @@ def process_distance_func(arg):
 def test_kmeans():
     #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, K = testdata_kmeans("")
-    print("K-Means (task 1) results are:")
-    kmeans_result = our_kmeans(N, D, A, K, process_distance_func(args.dist))
+    print("K-Means (task 2.1) results are:")
+    kmeans_result = our_kmeans(N, D, A, K)
     print(kmeans_result)
 
 def test_knn():
     #N, D, A, X, K = testdata_knn("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, X, K = testdata_knn("")
-    knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
+    knn_result = our_knn(N, D, A, X, K)
     print("KNN (task 1) results are:")
     print(knn_result)
 
 def test_ann():
     #N, D, A, X, K = testdata_ann("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, X, K = testdata_ann("")
-    ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
+    ann_result = our_ann(N, D, A, X, K)
     print("ANN (task 2.2) results are:")
     print(ann_result)
 
