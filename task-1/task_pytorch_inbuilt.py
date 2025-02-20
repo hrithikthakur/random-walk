@@ -15,7 +15,8 @@ from test import testdata_kmeans, testdata_knn, testdata_ann
 # Parse command line arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda", help="Select device: cpu or cuda")
-parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="l2", help="Select what distance measure to use: cosine, l2, dot, manhattan")
+parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="cosine", help="Select what distance measure to use: cosine, l2, dot, manhattan")
+parser.add_argument("--testfile", default="", help="Specify test file JSON. Leave empty for a randomised small test")
 args = parser.parse_args()
 device = args.device
 
@@ -122,23 +123,20 @@ def process_distance_func(arg):
 
 
 def test_kmeans():
-    #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
-    N, D, A, K = testdata_kmeans("")
-    print("K-Means (task 2.1) results are:")
-    kmeans_result = our_kmeans(N, D, A, K)
+    N, D, A, K = testdata_kmeans(args.testfile)
+    print("K-Means (task 1) results are:")
+    kmeans_result = our_kmeans(N, D, A, K, process_distance_func(args.dist))
     print(kmeans_result)
 
 def test_knn():
-    #N, D, A, X, K = testdata_knn("test_file.json") #TODO: aquire or create a JSON file
-    N, D, A, X, K = testdata_knn("")
-    knn_result = our_knn(N, D, A, X, K)
+    N, D, A, X, K = testdata_knn(args.testfile)
+    knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
     print("KNN (task 1) results are:")
     print(knn_result)
 
 def test_ann():
-    #N, D, A, X, K = testdata_ann("test_file.json") #TODO: aquire or create a JSON file
-    N, D, A, X, K = testdata_ann("")
-    ann_result = our_ann(N, D, A, X, K)
+    N, D, A, X, K = testdata_ann(args.testfile)
+    ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
 

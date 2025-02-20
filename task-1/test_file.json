@@ -1,0 +1,7 @@
+{
+    "n": 1000,
+    "d": 100,
+    "a_file": "testdata/matrix_D=100_N=1000.txt",
+    "x_file": "testdata/vector_D=100.txt",
+    "k": 10
+}
