@@ -78,7 +78,7 @@ def process_distance_func(arg):
         return distance_manhattan
     else:
         return "ERROR: unknow distance function specified"
-    
+
 def test_kmeans():
     #N, D, A, K = testdata_kmeans("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, K = testdata_kmeans("")
@@ -92,14 +92,14 @@ def test_knn():
     knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
     print("KNN (task 1) results are:")
     print(knn_result)
-    
+
 def test_ann():
     #N, D, A, X, K = testdata_ann("test_file.json") #TODO: aquire or create a JSON file
     N, D, A, X, K = testdata_ann("")
     ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
-    
+
 def recall_rate(list1, list2):
     """
     Calculate the recall rate of two lists
@@ -107,6 +107,11 @@ def recall_rate(list1, list2):
     return len(set(list1) & set(list2)) / len(list1)
 
 if __name__ == "__main__":
-    test_kmeans()
-    test_knn()
-    test_ann()
+    # Define tests to run.
+    tests = [test_kmeans, test_knn, test_ann]
+
+    # Run tests and measure time taken.
+    for callable in tests:
+        start = time.time()
+        callable()
+        print(f"=== {callable.__name__}() completed in {time.time() - start:.4f} seconds ===\n")
