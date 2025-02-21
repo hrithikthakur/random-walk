@@ -18,14 +18,27 @@ pip install cupy-cuda12x==12.0.0 triton==3.2.0
 ```
 
 # TODOs
- * Test setup on remote gpu machine
- * Have a way to log time, so we can compare later
- * Ask about inconsistency between PDF decription of question 1.2 output and the one in the README
- * Construct a JSON (or JSONs) with the test data required
- * Do CuPy and Triton implementations so we can compare
- * Maybe do a NumPy implementation so we can check against CPU (probably different results from CPU PyTorch)
- * Investigate pytorch solution, as it is very inneficient when compared to the one using inbuild functions
+ * Test setup on remote gpu machine (DONE)
+ * Have a way to log time, so we can compare later (DONE)
+ * Ask about inconsistency between PDF decription of question 1.2 output and the one in the README (DONE)
+ * Construct a JSON (or JSONs) with the test data required (IN PROGRESS, still have to figure out a full solution)
+ * Do CuPy and Triton implementations so we can compare (Both in progress)
+ * Maybe do a NumPy implementation so we can check against CPU (probably different results from CPU PyTorch) (Small adjustments needed)
+ * Investigate pytorch solution, as it is very inneficient when compared to the one using inbuild functions (DONE)
+ * Make sure method signatures are not changed
+ * Make sure everything is returned as a numpy array in a cpu
+ * Implement test for recall to be run along with the usual tests
+ * ANN. Redo ANN for everything, try different methods:
+  1) Do KNN on H (hyperparameter we set) nearest clusters
+  2) HNSW-Graph algorithm
+  3) Some other algos later
  * Do writeup
+
+ For next meeting (week 6):
+ * Darius: look into test data, implement basic ANN (as described in the README) in the PytorCH Solution. Try to make pytorch more efficient. Look at the method signatures and return types
+* Finn: fine tune triton stuff, implement basic ANN, (as described in the README), look at the method signatures and return types
+* Max: take a look at Numpy KNN and K-means implementation. Implement basic ANN, (as described in the README), look at the method signatures and return types
+* Hrithik: ?
 
 # Testing setup
 * Generate the testfiles (.txt files) by running testdata_generator.py. Specify dimensionality (D) and number of vectors (N) in the matrix in the hyperparameters
