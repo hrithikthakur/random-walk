@@ -27,6 +27,12 @@ pip install cupy-cuda12x==12.0.0 triton==3.2.0
  * Investigate pytorch solution, as it is very inneficient when compared to the one using inbuild functions
  * Do writeup
 
+# Testing setup
+* Generate the testfiles (.txt files) by running testdata_generator.py. Specify dimensionality (D) and number of vectors (N) in the matrix in the hyperparameters
+* Edit the test_file.json. Specify the N and D you want to test, along with the appropriate file names.
+* Run python your-solution.py --testfile test_file.json
+
+Optionally, if --testfile is not specified, it should default to running a small (N=1000, D=100), randomised test, just like before
 # Task 1
 
 ## Part 1: KNN
