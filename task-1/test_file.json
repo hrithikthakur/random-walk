@@ -1,7 +1,7 @@
 {
-    "n": 1000,
-    "d": 100,
-    "a_file": "testdata/matrix_D=100_N=1000.txt",
-    "x_file": "testdata/vector_D=100.txt",
+    "n": 4000,
+    "d": 64,
+    "a_file": "testdata/matrix_D=64_N=4000.npy",
+    "x_file": "testdata/vector_D=64.npy",
     "k": 10
 }

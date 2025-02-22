@@ -1,3 +1,7 @@
+# All of the testfiles
+matrix_*
+vector_*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

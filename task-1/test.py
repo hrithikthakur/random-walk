@@ -28,11 +28,13 @@ def testdata_kmeans(test_file):
             D = data["d"]
             A_file = data["a_file"]
             K = data["k"]
-            A = np.loadtxt(A_file)
+            # A = np.loadtxt(A_file) The original line
+            A = read_data(A_file) #Edited line (TODO: discuss in meeting)
         return N, D, A, K
 
 def testdata_knn(test_file):
     if test_file == "":
+        print(f"TESTFILE IS {test_file}")
         # use random data
         N = 1000
         D = 100
@@ -49,8 +51,10 @@ def testdata_knn(test_file):
             A_file = data["a_file"]
             X_file = data["x_file"]
             K = data["k"]
-            A = np.loadtxt(A_file)
-            X = np.loadtxt(X_file)
+            # A = np.loadtxt(A_file) The original line
+            A = read_data(A_file) #Edited line (TODO: discuss in meeting) 
+            #X = np.loadtxt(X_file) The original line
+            X = read_data(X_file) #Edited line (TODO: discuss in meeting) 
         return N, D, A, X, K
     
 def testdata_ann(test_file):
@@ -71,6 +75,8 @@ def testdata_ann(test_file):
             A_file = data["a_file"]
             X_file = data["x_file"]
             K = data["k"]
-            A = np.loadtxt(A_file)
-            X = np.loadtxt(X_file)
+            # A = np.loadtxt(A_file) The original line
+            A = read_data(A_file) #Edited line (TODO: discuss in meeting) 
+            #X = np.loadtxt(X_file) The original line
+            X = read_data(X_file) #Edited line (TODO: discuss in meeting) 
         return N, D, A, X, K

@@ -41,7 +41,7 @@ pip install cupy-cuda12x==12.0.0 triton==3.2.0
 * Hrithik: ?
 
 # Testing setup
-* Generate the testfiles (.txt files) by running testdata_generator.py. Specify dimensionality (D) and number of vectors (N) in the matrix in the hyperparameters
+* cd into the `testdata` foplder and generate the testfiles (.npy files) by running testdata_generator.py. It should auto generate the basic set of test files. These testfiles are also included in the .gitignore so they will not be added to any commits. The files are also generated using a preset seed, so everyone should have the same ones in the end.
 * Edit the test_file.json. Specify the N and D you want to test, along with the appropriate file names.
 * Run python your-solution.py --testfile test_file.json
 
