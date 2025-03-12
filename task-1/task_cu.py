@@ -2,14 +2,17 @@
 import cupy as cp
 # import triton
 import numpy as np
-# import time
+import time
 # import json
 import argparse
 from test import testdata_kmeans, testdata_knn, testdata_ann
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda", help="Select device: cpu or cuda")
-parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="cosine", help="Select what distance measure to use: cosine, l2, dot, manhattan")
+parser.add_argument("--dist", choices=["cosine", "l2", "dot", "manhattan"], default="l2", help="Select what distance measure to use: cosine, l2, dot, manhattan")
+parser.add_argument("--testfile", default="",
+                    help="Specify test file JSON. Leave empty for a randomised small test")
+
 args = parser.parse_args()
 device = args.device
 
@@ -172,44 +175,188 @@ def process_distance_func(arg):
         return distance_manhattan
     else:
         raise ValueError("Unknown distance function specified")
-    
+
 def test_kmeans():
-    N, D, A, K = testdata_kmeans("")
-    print("K-Means (task 1) results are:")
+    N, D, A, K = testdata_kmeans(args.testfile)
     kmeans_result = our_kmeans(N, D, A, K, process_distance_func(args.dist))
+    print("K-Means (task 1.1) results are:")
     print(kmeans_result)
+    
+def test_kmeans_detailed():
+    # test data
+    N, D, A, K = testdata_kmeans(args.testfile)
+    
+    # initial setup
+    print("\nK-Means Clustering Test:")
+    print(f"Number of points (N): {N}")
+    print(f"Dimensions (D): {D}")
+    print(f"Number of clusters (K): {K}")
+    print(f"Data shape: {A.shape}")
+    print(f"Distance metric: {args.dist}")
+    
+    # start time
+    start_time = time.time()
+    
+    # run teh function
+    kmeans_result = our_kmeans(N, D, A, K, process_distance_func(args.dist))
+    
+    # net execution time
+    execution_time = time.time() - start_time
+    
+    print("\nResults:")
+    print(f"Centroids shape: {kmeans_result.shape}")
+    print(f"Execution time is: {execution_time:.4f} seconds with {N} points, {D} dimensions, and {K} clusters")
+ 
 
 def test_knn():
-    N, D, A, X, K = testdata_knn(args.testfile)
-    print("Debug testdata_knn output:")
-    print(f"N (number of database points): {N}")
-    print(f"D (dimensions): {D}")
-    print(f"A shape (database): {A.shape}")
-    print(f"X type: {type(X)}")
-    print(f"X shape (query points): {X.shape if hasattr(X, 'shape') else 'no shape'}")
-    print(f"K (number of neighbors): {K}")
+    # test data
+    N, D, A, X, K = testdata_knn(args.testfile, 5)  # Testing for 5 query points
+    knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
     
-    # Convert X to correct shape if needed
-    if not hasattr(X, 'shape'):
-        X = np.array(X)
-    if len(X.shape) == 1:
-        X = X.reshape(1, -1)
-        
-    print(f"X shape after reshape: {X.shape}")
+    print("KNN (task 1) results are:")
+    print(knn_result)
+
+def test_knn_detailed():
+    N, D, A, X, K = testdata_knn(args.testfile)
+    
+    print(f"\nTesting KNN with:")
+    print(f"Database size (N): {N}")
+    print(f"Dimensions (D): {D}")
+    print(f"Query points (M): {X.shape[0] if isinstance(X, np.ndarray) else 1}")
+    print(f"Neighbors (K): {K}")
+    
+    # Run multiple times for timing statistics
+    num_runs = 5
+    times = []
+    
+    for _ in range(num_runs):
+        start_time = time.time()
+        knn_result = our_knn(N, D, A, X, K)
+        times.append(time.time() - start_time)
+    
+    mean_time = np.mean(times)
+    std_time = np.std(times)
+    print(f"KNN: {mean_time:.4f} ± {std_time:.4f} seconds")
+    
+    return knn_result
     
 def test_ann():
-    N, D, A, X, K = testdata_ann("")
+    N, D, A, X, K = testdata_ann(args.testfile, 5)
     ann_result = our_ann_kmeans(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
+
+
+def test_ann_detailed():
+    # test data
+    N, D, A, X, K = testdata_ann(args.testfile, M=5)  # Test with 5 query points
     
+    print("\n=== Testing Approximate Nearest Neighbors ===")
+    print(f"Database size (N): {N}")
+    print(f"Dimensions (D): {D}")
+    print(f"Number of queries (M): {X.shape[0]}")
+    print(f"Number of neighbors (K): {K}")
+    print(f"Distance metric: {args.dist}")
+    
+    T = 5  # T is the number of trials
+    times = []
+    results = []
+    
+    print("\nRunning trials...")
+    for t in range(T):
+        start_time = time.time()
+        ann_result = our_ann_kmeans(N, D, A, X, K, process_distance_func(args.dist))
+        trial_time = time.time() - start_time
+        times.append(trial_time)
+        results.append(ann_result)
+        print(f"Trial {t+1}: {trial_time:.4f} seconds")
+    
+    # analyse results
+    avg_time = np.mean(times)
+    std_time = np.std(times)
+    
+    print("\n=== Results ===")
+    print(f"Average time: {avg_time:.4f} ± {std_time:.4f} seconds")
+    print(f"Fastest trial: {min(times):.4f} seconds")
+    print(f"Slowest trial: {max(times):.4f} seconds")
+    
+    # checking for consistency across trials
+    if T > 1:
+        print("\n=== Consistency Analysis ===")
+        base_result = results[0]
+        for t in range(1, T):
+            match_rate = np.mean([len(set(r1) & set(r2)) / K 
+                                for r1, r2 in zip(base_result, results[t])])
+            print(f"Trial {t+1} match rate with Trial 1: {match_rate:.4f}")
+    
+    return results[0]
+
+
 def recall_rate(list1, list2):
     return len(set(list1) & set(list2)) / len(list1)
 
+def recall_test(knn_function, ann_function, T=10):
+    N, D, A, X, K = testdata_ann(args.testfile)
+    
+    # start
+    start_time = time.time()
+    knn_results = knn_function(N, D, A, X, K)
+    knn_time = time.time() - start_time
+    
+    total_recall = 0.0
+    ann_total_time = 0.0
+    
+    for _ in range(T):
+        start_time = time.time()
+        ann_results = ann_function(N, D, A, X, K)
+        ann_total_time += time.time() - start_time
+        total_recall += recall_rate(knn_results, ann_results)
+    
+    avg_recall = total_recall/T
+    avg_ann_time = ann_total_time/T
+    
+    print(f"\n=== Recall Test Results ===")
+    print(f"Functions tested: {knn_function.__name__} vs {ann_function.__name__}")
+    print(f"Parameters: K={K}, T={T}")
+    print(f"Exact KNN time: {knn_time:.4f} seconds")
+    print(f"Average ANN time: {avg_ann_time:.4f} seconds")
+    print(f"Average speedup: {knn_time/avg_ann_time:.2f}x")
+    print(f"Average recall: {avg_recall:.4f}")
+
+
+def init_gpu():
+    """Initialize and warm up GPU"""
+    try:
+        # Get device information
+        device = cp.cuda.runtime.getDeviceProperties(0)
+        print(f"\nGPU Device: {device['name'].decode()}")
+        print(f"Compute Capability: {device['computeMajor']}.{device['computeMinor']}")
+        print(f"Memory: {device['totalGlobalMem'] / 1e9:.2f} GB")
+        
+        # Set memory pool allocator
+        cp.cuda.set_allocator(cp.cuda.MemoryPool().malloc)
+        
+        # Warm up GPU
+        x = cp.arange(1000)
+        x = cp.sum(x)  # Force computation
+        cp.cuda.Stream.null.synchronize()
+        
+        return True
+    except cp.cuda.runtime.CUDARuntimeError:
+        print("No GPU found. Look into your CUDA and PATH variables!")
+        return False
+    
+
 if __name__ == "__main__":
+
+    #warm up
+    if not init_gpu():
+        raise SystemExit("GPU initialization failed")
+    
     print("Starting task 1")
-    # test_kmeans()
+    test_kmeans_detailed()
     print("Starting task 2")
-    test_knn()
+    test_knn_detailed()
     print("Starting task 3")
-    # test_ann()
+    test_ann_detailed()
+

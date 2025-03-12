@@ -32,14 +32,14 @@ def testdata_kmeans(test_file):
             A = read_data(A_file) #Edited line (TODO: discuss in meeting)
         return N, D, A, K
 
-def testdata_knn(test_file):
+def testdata_knn(test_file, M=1):
     if test_file == "":
         print(f"TESTFILE IS {test_file}")
         # use random data
         N = 1000
         D = 100
         A = np.random.randn(N, D)
-        X = np.random.randn(1, D)  # Changed this line to make X 2D
+        X = np.random.randn(M, D)  # Changed this line to make X 2D, M query points
         K = 10
         return N, D, A, X, K
     else:
@@ -57,13 +57,13 @@ def testdata_knn(test_file):
             X = read_data(X_file) #Edited line (TODO: discuss in meeting) 
         return N, D, A, X, K
     
-def testdata_ann(test_file):
+def testdata_ann(test_file, M=1):
     if test_file == "":
         # use random data
         N = 1000
         D = 100
         A = np.random.randn(N, D)
-        X = np.random.randn(D)
+        X = np.random.randn(M, D)
         K = 10
         return N, D, A, X, K
     else:
