@@ -39,7 +39,7 @@ def testdata_knn(test_file):
         N = 1000
         D = 100
         A = np.random.randn(N, D)
-        X = np.random.randn(D)
+        X = np.random.randn(1, D)  # Changed this line to make X 2D
         K = 10
         return N, D, A, X, K
     else:

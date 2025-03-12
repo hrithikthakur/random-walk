@@ -1,9 +1,9 @@
-import torch
+# import torch
 import cupy as cp
-import triton
+# import triton
 import numpy as np
-import time
-import json
+# import time
+# import json
 import argparse
 from test import testdata_kmeans, testdata_knn, testdata_ann
 
@@ -180,14 +180,26 @@ def test_kmeans():
     print(kmeans_result)
 
 def test_knn():
-    N, D, A, X, K = testdata_knn("")
-    knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
-    print("KNN (task 1) results are:")
-    print(knn_result)
+    N, D, A, X, K = testdata_knn(args.testfile)
+    print("Debug testdata_knn output:")
+    print(f"N (number of database points): {N}")
+    print(f"D (dimensions): {D}")
+    print(f"A shape (database): {A.shape}")
+    print(f"X type: {type(X)}")
+    print(f"X shape (query points): {X.shape if hasattr(X, 'shape') else 'no shape'}")
+    print(f"K (number of neighbors): {K}")
+    
+    # Convert X to correct shape if needed
+    if not hasattr(X, 'shape'):
+        X = np.array(X)
+    if len(X.shape) == 1:
+        X = X.reshape(1, -1)
+        
+    print(f"X shape after reshape: {X.shape}")
     
 def test_ann():
     N, D, A, X, K = testdata_ann("")
-    ann_result = our_kmeans_ann(N, D, A, X, K, process_distance_func(args.dist))
+    ann_result = our_ann_kmeans(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
     
@@ -195,6 +207,9 @@ def recall_rate(list1, list2):
     return len(set(list1) & set(list2)) / len(list1)
 
 if __name__ == "__main__":
-    test_kmeans()
+    print("Starting task 1")
+    # test_kmeans()
+    print("Starting task 2")
     test_knn()
-    test_ann()
+    print("Starting task 3")
+    # test_ann()
