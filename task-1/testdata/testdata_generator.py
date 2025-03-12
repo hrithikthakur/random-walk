@@ -1,36 +1,45 @@
-import os
 import numpy as np
+import argparse
+import os
 
-# Parameters
-N = [4000, 40000, 4000000]  # Number of data points. "Default" is 1000
-D = [2, 64, 256, 1024]   # Dimensionality of the data. "Default is 100"
+def generate_test_data(generate_big=False):
+    dimensions = [2, 64, 256, 1024]
+    sizes = [4000, 40000]
+    
+    if generate_big:
+        sizes.append(4000000)
+        print("\nWARNING: Generating very large files. This might use a lot of memory!")
+    
+    M = 10  # number of query points
+    
+    for D in dimensions:
+        X = np.random.randn(M, D)
+        np.save(f'vector_D={D}.npy', X)
+        print(f"Generated vector_D={D}.npy with shape ({M}, {D})")
+        
+        for N in sizes:
+            if N == 4000000 and D >= 256 and not generate_big:
+                print(f"Skipping large matrix N={N}, D={D} (use --big to generate)")
+                continue
+            
+            print(f"Generating matrix_D={D}_N={N}.npy")
+            matrix = np.random.randn(N, D)
+            np.save(f'matrix_D={D}_N={N}.npy', matrix)
+            print(f"Done: matrix_D={D}_N={N}.npy with shape ({N}, {D})")
 
-GENERATE_REALLY_BIG_FILES = False # Set to true if you want to generate the really big 4.000.000x256 and 4.000.000x1024 files (might crash your machine)
-
-np.random.seed(42)
-
-for n in N:
-    for d in D:
-        # File names
-        matrix_file = f"matrix_D={d}_N={n}.npy"
-        vector_file = f"vector_D={d}.npy"
-        # Check if files already exist
-        if os.path.exists(matrix_file):
-            print(f"File '{matrix_file}' already exists. Skipping matrix generation.")
-        elif(GENERATE_REALLY_BIG_FILES or (not (n==4000000 and d>64))):
-            # Generate random data for A (N x D matrix)
-            A = np.random.randn(n, d)
-            # Save matrix A
-            np.save(matrix_file, A)
-            print(f"Matrix saved to '{matrix_file}'.")
-
-        if os.path.exists(vector_file):
-            print(f"File '{vector_file}' already exists. Skipping vector generation.")
-        else:
-            # Generate random query point X (D-dimensional vector)
-            X = np.random.randn(d)
-            # Save vector X
-            np.save(vector_file, X)
-            print(f"Vector saved to '{vector_file}'.")
-
-print("Data file generation process completed.")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--big', action='store_true', help='Generate very large files (4M points, might crash your machine)')
+    args = parser.parse_args()
+    
+    os.makedirs('testdata', exist_ok=True)
+    
+    print("Generating test data...")
+    print("Memory usage warning:")
+    print("- Small  (4K points):  ~2MB per dimension")
+    print("- Medium (40K points): ~80MB per dimension")
+    if args.big:
+        print("- Large  (4M points):  ~8GB per dimension")
+    
+    generate_test_data(args.big)
+    print("\nDone!")
