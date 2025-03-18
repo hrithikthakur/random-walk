@@ -16,12 +16,18 @@ except ImportError:
 GPU_AVAILABLE = False
 
 def init_gpu():
-    """Initialize GPU and set up memory pool"""
+    """Initialize GPU and set up memory pool, with fallback"""
+    global GPU_AVAILABLE
+    
+    # Check if CuPy is available at all
+    if not CUPY_AVAILABLE:
+        print("CuPy not installed. Using CPU (NumPy) instead.")
+        return False
+        
     try:
         # Try to initialize GPU
         device_id = cp.cuda.runtime.getDevice()
         device_props = cp.cuda.runtime.getDeviceProperties(device_id)
-        
         print(f"Using device: cuda")
         print(f"Device {device_id}: {device_props['name'].decode()}")
         print(f"Compute capability: {device_props['major']}.{device_props['minor']}")
@@ -29,10 +35,18 @@ def init_gpu():
         # Set memory pool allocator
         cp.cuda.set_allocator(cp.cuda.MemoryPool().malloc)
         
+        GPU_AVAILABLE = True
         return True
-        
     except Exception as e:
-        print(f"GPU initialization failed: {e}")
+        print(f"No GPU found or error initializing: {e}")
+        print("Falling back to CPU (NumPy) computations")
+        
+        # Handle the CuPy to NumPy transition
+        global cp
+        import numpy as np
+        cp = np  # Replace cp with np for all future calls
+        
+        GPU_AVAILABLE = False
         return False
 
 # Utility functions for array conversion
@@ -685,137 +699,11 @@ def test_ann_efficient():
     print(f"ANN time: {ann_time:.4f}s (speedup: {speedup:.2f}x)")
     print(f"Average recall: {mean_recall:.4f}")
 
-def test_ann_benchmark():
-    """
-    Comprehensive benchmark for ANN implementations
-    Tests performance, recall, and memory usage for different configurations
-    """
-    print("\n========== ANN BENCHMARK ==========")
-    
-    try:
-        print("Loading test data...")
-        N, D, A, X, K = testdata_ann(args.testfile)
-    except:
-        print("Error loading test data, using random data")
-        N, D = 1000, 100
-        A = np.random.random((N, D))
-        X = np.random.random((10, D))
-        K = 10
-    
-    # Get parameters
-    metric = process_distance_func(args.dist) if hasattr(args, 'dist') else 'l2'
-    k1_factor = float(args.k1) if hasattr(args, 'k1') else 3.0
-    k2_factor = float(args.k2) if hasattr(args, 'k2') else 6.0
-    
-    print(f"\nDATASET INFO:")
-    print(f"  Points (N): {N}")
-    print(f"  Dimensions (D): {D}")
-    print(f"  Queries: {X.shape[0]}")
-    print(f"  Neighbors (K): {K}")
-    print(f"  Distance metric: {metric}")
-    
-    # Get ground truth with exact KNN
-    print("\nComputing exact KNN (ground truth)...")
-    start_time = time.time()
-    exact_results = our_knn(N, D, A, X, K, metric=metric)
-    exact_time = time.time() - start_time
-    print(f"  Time: {exact_time:.4f}s")
-    
-    # Record benchmark results
-    results = {
-        'exact_knn': {
-            'time': exact_time,
-            'speedup': 1.0,
-            'recall': 1.0
-        }
-    }
-    
-    # Test ANN implementations
-    methods = [
-        ('Efficient ANN', our_ann_efficient, {'k1_factor': k1_factor, 'k2_factor': k2_factor}),
-    ]
-    
-    # Add more methods if available in global scope
-    if 'our_ann' in globals():
-        methods.append(('Default ANN', our_ann, {'k1_factor': k1_factor, 'k2_factor': k2_factor}))
-    
-    # Run each method
-    for name, method, params in methods:
-        print(f"\nTesting {name}...")
-        print(f"  Parameters: {params}")
-        
-        # Run timing test
-        start_time = time.time()
-        ann_results = method(N, D, A, X, K, metric=metric, **params)
-        ann_time = time.time() - start_time
-        
-        # Calculate recall rates
-        recalls = []
-        for i in range(X.shape[0]):
-            exact_indices = exact_results[:, i].get()
-            ann_indices = ann_results[:, i].get()
-            recall = recall_rate(exact_indices, ann_indices)
-            recalls.append(recall)
-        
-        mean_recall = np.mean(recalls)
-        min_recall = np.min(recalls)
-        max_recall = np.max(recalls)
-        std_recall = np.std(recalls)
-        speedup = exact_time / ann_time
-        
-        # Store results
-        results[name] = {
-            'time': ann_time,
-            'speedup': speedup,
-            'recall_mean': mean_recall,
-            'recall_min': min_recall,
-            'recall_max': max_recall,
-            'recall_std': std_recall
-        }
-        
-        print(f"  Time: {ann_time:.4f}s")
-        print(f"  Speedup: {speedup:.2f}x")
-        print(f"  Recall: {mean_recall:.4f} ± {std_recall:.4f} (min={min_recall:.4f}, max={max_recall:.4f})")
-    
-    # Print comparison table
-    print("\n========== BENCHMARK RESULTS ==========")
-    print(f"{'Method':<20} {'Time (s)':<10} {'Speedup':<10} {'Recall':<10} {'Range':<15}")
-    print("-" * 70)
-    
-    for method, data in results.items():
-        if method == 'exact_knn':
-            recall_str = "1.0000"
-            range_str = "N/A"
-        else:
-            recall_str = f"{data['recall_mean']:.4f}"
-            range_str = f"{data['recall_min']:.2f}-{data['recall_max']:.2f}"
-        
-        print(f"{method:<20} {data['time']:<10.4f} {data['speedup']:<10.2f} {recall_str:<10} {range_str:<15}")
-    
-    # Print recommendations
-    print("\nRECOMMENDATIONS:")
-    for method, data in results.items():
-        if method == 'exact_knn':
-            continue
-        
-        if data['speedup'] >= 10 and data['recall_mean'] >= 0.9:
-            print(f"✓ {method}: Excellent balance of speed and accuracy")
-        elif data['speedup'] >= 5 and data['recall_mean'] >= 0.8:
-            print(f"✓ {method}: Good balance of speed and accuracy")
-        elif data['speedup'] >= 20 and data['recall_mean'] >= 0.7:
-            print(f"✓ {method}: Great for speed-critical applications")
-        elif data['recall_mean'] >= 0.95:
-            print(f"✓ {method}: Great for accuracy-critical applications")
-        else:
-            print(f"  {method}: Average performance")
-    
-    return results
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='KNN and ANN Testing')
     parser.add_argument('--testfile', type=str, default=None, help='Test data file to use')
     parser.add_argument('--dist', type=str, default='l2', help='Distance metric to use: l2, cosine')
-    parser.add_argument('--test', type=str, default='kmeans', help='Test to run: kmeans, ann, efficient, benchmark')
+    parser.add_argument('--test', type=str, default='kmeans', help='Test to run: kmeans, ann, efficient')
     parser.add_argument('--k1', type=float, default=3.0, help='K1 factor for clusters in ANN')
     parser.add_argument('--k2', type=float, default=6.0, help='K2 factor for candidates per cluster in ANN')
     args = parser.parse_args()
@@ -832,9 +720,6 @@ if __name__ == "__main__":
     elif args.test == 'efficient':
         print("\nTest Efficient ANN")
         test_ann_efficient()
-    elif args.test == 'benchmark':
-        print("\nBenchmark ANN")
-        test_ann_benchmark()
     else:
         print(f"Unknown test: {args.test}")
-        print("Available tests: kmeans, ann, efficient, benchmark") 
+        print("Available tests: kmeans, ann, efficient") 

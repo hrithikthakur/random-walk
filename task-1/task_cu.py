@@ -128,114 +128,43 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     
     return cp.asnumpy(final_indices)
 
-def our_ann_efficient(N, D, A, X, K, metric='l2', k1_factor=3.0, k2_factor=6.0):
-    """
-    Efficient ANN implementation with optimized recall rate
-    Assumes GPU is always available
-    
-    Args:
-        N: Number of database points
-        D: Dimensions of points
-        A: Database points of shape (N, D)
-        X: Query points of shape (M, D)
-        K: Number of nearest neighbors to find
-        metric: Distance metric ('l2' or 'cosine')
-        k1_factor: Controls number of clusters (higher = more clusters = higher recall)
-        k2_factor: Controls candidates per cluster (higher = more candidates = higher recall)
-    
-    Returns:
-        Array of indices of shape (K, M) where M is number of query points
-    """
-    # Convert inputs to CuPy arrays
+def our_ann(N, D, A, X, K, distance_func):
     A = cp.asarray(A)
     X = cp.asarray(X)
-    M = X.shape[0]  # Number of query points
     
-    # Compute optimal parameters for dataset characteristics
-    K1 = max(5, min(int(np.sqrt(N) * k1_factor), N//4))
-    K2 = max(K * 2, min(int(K * k2_factor), N//4))
-    n_probe = max(2, min(K1//4, 5))  # Fixed probe depth, optimized for recall/performance
+    n_clusters = min(int(cp.sqrt(N).item()), N // 10)
     
-    print(f"ANN parameters: K1={K1}, K2={K2}, probe={n_probe}")
+    centroids = our_kmeans(N, D, A, n_clusters, distance_func)
+    centroids = cp.asarray(centroids)
     
-    # Setup distance function and normalize if needed
-    if metric == 'cosine':
-        distance_fn = lambda x, y: cosine_distance(x, y)
-        A = A / (cp.linalg.norm(A, axis=1, keepdims=True) + 1e-8)
-        X = X / (cp.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
-    else:  # default to l2
-        distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
+    db_distances = distance_func(A, centroids)
+    db_labels = cp.argmin(db_distances, axis=1)
     
-    # Run k-means clustering once with better initialization
-    cluster_labels = our_kmeans(N, D, A, K1, metric=metric)
-    centroids = cp.zeros((K1, D))
+    final_indices = cp.zeros((X.shape[0], K), dtype=cp.int64)
     
-    # Compute centroids and analyze cluster sizes
-    cluster_sizes = cp.zeros(K1)
-    for k in range(K1):
-        mask = cluster_labels == k
-        size = cp.sum(mask)
-        cluster_sizes[k] = size
-        if size > 0:
-            centroids[k] = cp.mean(A[mask], axis=0)
-            if metric == 'cosine':
-                centroids[k] = centroids[k] / (cp.linalg.norm(centroids[k]) + 1e-8)
+    query_distances = distance_func(X, centroids)
     
-    min_size = int(cp.min(cluster_sizes))
-    max_size = int(cp.max(cluster_sizes))
-    avg_size = float(cp.mean(cluster_sizes))
-    print(f"Cluster stats: avg={avg_size:.1f}, min={min_size}, max={max_size}")
+    n_clusters_to_search = min(3, n_clusters)
     
-    # Process queries in batch for efficiency
-    results = []
-    for x in X:
-        # Find closest clusters
-        distances_to_centroids = distance_fn(centroids, x)
-        closest_clusters = cp.argsort(distances_to_centroids)[:n_probe]
+    for i in range(X.shape[0]):
+        nearest_clusters = cp.argsort(query_distances[i])[:n_clusters_to_search]
         
-        # Gather candidates from clusters
-        candidates = []
-        for cluster_idx in closest_clusters:
-            cluster_indices = cp.where(cluster_labels == cluster_idx)[0]
-            if len(cluster_indices) == 0:
-                continue
-                
-            # Select candidates from this cluster
-            cluster_points = A[cluster_indices]
-            cluster_distances = distance_fn(cluster_points, x)
-            
-            # Get more candidates from larger clusters
-            size_factor = min(3.0, cluster_sizes[cluster_idx] / avg_size)
-            local_k2 = min(int(K2 * size_factor), len(cluster_indices))
-            
-            nearest_in_cluster = cp.argsort(cluster_distances)[:local_k2]
-            candidates.extend(cluster_indices[nearest_in_cluster].get().tolist())
+        candidate_indices = cp.array([], dtype=cp.int64)
+        for cluster_idx in nearest_clusters:
+            cluster_points = cp.where(db_labels == cluster_idx)[0]
+            candidate_indices = cp.concatenate([candidate_indices, cluster_points])
         
-        # Fallback if we don't have enough candidates
-        if len(candidates) < K:
-            # Add points from other clusters
-            remaining = [c for c in range(K1) if c not in closest_clusters]
-            for c in remaining[:3]:  # Check up to 3 more clusters
-                cluster_indices = cp.where(cluster_labels == c)[0]
-                if len(cluster_indices) > 0:
-                    candidates.extend(cluster_indices.get().tolist()[:K])
-                if len(candidates) >= K * 3:
-                    break
+        if len(candidate_indices) < K:
+            remaining_points = cp.where(~cp.isin(cp.arange(N), candidate_indices))[0]
+            candidate_indices = cp.concatenate([candidate_indices, remaining_points])
         
-        # Final refinement
-        if candidates:
-            candidates = cp.array(candidates)
-            candidate_points = A[candidates]
-            final_distances = distance_fn(candidate_points, x)
-            final_indices = candidates[cp.argsort(final_distances)[:K]]
-            results.append(final_indices.get())
-        else:
-            # Fall back to full search
-            distances = distance_fn(A, x)
-            indices = cp.argsort(distances)[:K]
-            results.append(indices.get())
+        candidates = A[candidate_indices]
+        exact_distances = distance_func(X[i:i+1], candidates)
+        
+        nearest_k = cp.argsort(exact_distances[0])[:K]
+        final_indices[i] = candidate_indices[nearest_k]
     
-    return cp.array(results).T
+    return cp.asnumpy(final_indices)
 
 def process_distance_func(arg):
     if arg == "cosine":
@@ -315,7 +244,7 @@ def test_knn_detailed():
     
 def test_ann():
     N, D, A, X, K = testdata_ann(args.testfile, 1)
-    ann_result = our_ann_efficient(N, D, A, X, K, process_distance_func(args.dist))
+    ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
     print("ANN (task 2.2) results are:")
     print(ann_result)
 
@@ -338,7 +267,7 @@ def test_ann_detailed():
     print("\nRunning trials...")
     for t in range(T):
         start_time = time.time()
-        ann_result = our_ann_efficient(N, D, A, X, K, process_distance_func(args.dist))
+        ann_result = our_ann(N, D, A, X, K, process_distance_func(args.dist))
         trial_time = time.time() - start_time
         times.append(trial_time)
         results.append(ann_result)
@@ -491,7 +420,7 @@ if __name__ == "__main__":
     print("Test ANN LSH")
     test_ann_lsh_detailed()
     print("Recall test")
-    recall_test(our_knn, our_ann_efficient)
+    recall_test(our_knn, our_ann)
     recall_test(our_knn, our_ann_lsh)
 
 
