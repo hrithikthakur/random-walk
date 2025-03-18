@@ -138,7 +138,7 @@ def our_ann(N, D, A, X, K, distance_func):
     K2 = 2000  # Candidates per cluster
     
     # Run k-means clustering
-    cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K))
+    cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K, process_distance_func(args.dist)))
     centroids = cp.zeros((K, D))
     
     # Compute centroids
