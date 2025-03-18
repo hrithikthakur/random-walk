@@ -107,11 +107,7 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     A = cp.asarray(A)
     X = cp.asarray(X)
     
-    if distance_func.__name__ != 'distance_cosine':
-        print(f"""WARN: you were trying to use a distance that was not cosine with the LSH implementation. 
-              This LSH implementation is built to be used with cosine distance specifically.
-              Therefore, intead of using specified {distance_func.__name__} distance, cosine distance is still being used.""")
-    
+     
     num_hashes = 50
     rp = cp.random.randn(D, num_hashes)
     db_hashes = cp.sign(A @ rp)
