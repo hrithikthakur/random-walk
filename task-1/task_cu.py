@@ -119,7 +119,7 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     
     for i in range(X.shape[0]):
         candidates = A[candidate_indices[i]]
-        exact_distances = distance_cosine(X[i:i+1], candidates)
+        exact_distances = distance_func(X[i:i+1], candidates)
         final_indices[i] = candidate_indices[i][cp.argsort(exact_distances[0])[:K]]
     
     return cp.asnumpy(final_indices)
