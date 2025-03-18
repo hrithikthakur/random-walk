@@ -129,26 +129,27 @@ def our_ann(N, D, A, X, K, distance_func):
     Improved ANN implementation based on PyTorch version
     """
     # Convert to GPU arrays
-    A = cp.asarray(A)
-    X = cp.asarray(X)
+    A_gpu = cp.asarray(A)
+    X_gpu = cp.asarray(X)
     
-    # Fixed hyperparameters like PyTorch version
+    # Fixed hyperparameters
     K1 = 4  # Number of clusters to check
     K2 = 2000  # Candidates per cluster
     
     # Run k-means clustering
-    cluster_labels = our_kmeans(N, D, A, K, process_distance_func(args.dist))
+    cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K))  # Ensure CuPy array
     centroids = cp.zeros((K, D))
     
     # Compute centroids
     for k in range(K):
         mask = cluster_labels == k
+        mask = cp.asarray(mask)  # Convert mask to CuPy array
         if cp.any(mask):
-            centroids[k] = cp.mean(A[mask], axis=0)
+            centroids[k] = cp.mean(A_gpu[mask], axis=0)
     
     # Process each query point
     results = []
-    for x in X:
+    for x in X_gpu:
         # Find K1 closest clusters
         centroid_distances = distance_func(centroids, x)
         closest_clusters = cp.argsort(centroid_distances)[:K1]
@@ -159,7 +160,7 @@ def our_ann(N, D, A, X, K, distance_func):
         
         for cluster_idx in closest_clusters:
             indices = cp.where(cluster_labels == cluster_idx)[0]
-            points = A[indices]
+            points = A_gpu[indices]
             
             if len(points) > 0:
                 distances = distance_func(points, x)
@@ -178,7 +179,7 @@ def our_ann(N, D, A, X, K, distance_func):
             results.append(final_indices.get())
         else:
             # Fallback to full search
-            distances = distance_func(A, x)
+            distances = distance_func(A_gpu, x)
             indices = cp.argsort(distances)[:K]
             results.append(indices.get())
     
@@ -425,7 +426,7 @@ def init_gpu():
         return False
     
 if __name__ == "__main__":
-
+    print("Inside Main")
     #warm up
     init_gpu()
     

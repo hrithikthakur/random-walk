@@ -1,66 +1,54 @@
-def our_ann(N, D, A, X, K, distance_func, k1=None, k2=None):
+def our_ann(N, D, A, X, K, distance_func):
     """
-    Approximate Nearest Neighbor search with k-means clustering
-    
-    Args:
-        N: Number of database points
-        D: Dimensions of points
-        A: Database points (N, D)
-        X: Query points (M, D)
-        K: Number of nearest neighbors to find
-        distance_func: Distance function to use
-        k1: Number of clusters (if None, computed based on N)
-        k2: Number of candidates per cluster (if None, computed based on K)
+    Improved ANN implementation based on PyTorch version
     """
     # Convert to GPU arrays
     A_gpu = cp.asarray(A)
     X_gpu = cp.asarray(X)
     
-    # Compute K1 (number of clusters) if not provided
-    if k1 is None:
-        k1 = min(int(np.sqrt(N) * 3), N//5)  # Default: sqrt(N) * 3
-    K1 = max(5, min(k1, N//2))  # Ensure reasonable bounds
-    
-    # Compute K2 (candidates per cluster) if not provided
-    if k2 is None:
-        k2 = min(K * 5, N//5)  # Default: K * 5
-    K2 = max(K * 2, min(k2, N//3))  # Ensure enough candidates
+    # Fixed hyperparameters
+    K1 = 4  # Number of clusters to check
+    K2 = 2000  # Candidates per cluster
     
     # Run k-means clustering
-    cluster_labels = our_kmeans(N, D, A_gpu, K1)
-    centroids = cp.zeros((K1, D))
+    cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K))  # Ensure CuPy array
+    centroids = cp.zeros((K, D))
     
     # Compute centroids
-    for k in range(K1):
+    for k in range(K):
         mask = cluster_labels == k
+        mask = cp.asarray(mask)  # Convert mask to CuPy array
         if cp.any(mask):
             centroids[k] = cp.mean(A_gpu[mask], axis=0)
     
     # Process each query point
     results = []
     for x in X_gpu:
-        # Find closest clusters
+        # Find K1 closest clusters
         centroid_distances = distance_func(centroids, x)
-        closest_clusters = cp.argsort(centroid_distances)[:3]  # Check 3 closest clusters
+        closest_clusters = cp.argsort(centroid_distances)[:K1]
         
-        # Gather candidates from closest clusters
-        candidates = []
+        # Gather candidates from all selected clusters
+        candidate_indices_list = []
+        candidate_vectors_list = []
+        
         for cluster_idx in closest_clusters:
-            cluster_points = A_gpu[cluster_labels == cluster_idx]
-            cluster_indices = cp.where(cluster_labels == cluster_idx)[0]
+            indices = cp.where(cluster_labels == cluster_idx)[0]
+            points = A_gpu[indices]
             
-            if len(cluster_points) == 0:
-                continue
-            
-            # Find nearest points in cluster
-            distances = distance_func(cluster_points, x)
-            nearest = cp.argsort(distances)[:K2]
-            candidates.extend(cluster_indices[nearest].get().tolist())
+            if len(points) > 0:
+                distances = distance_func(points, x)
+                nearest = cp.argsort(distances)[:min(len(points), K2)]
+                candidate_indices_list.append(indices[nearest])
+                candidate_vectors_list.append(points[nearest])
         
-        # Final refinement
-        if candidates:
-            candidates = cp.array(candidates)
-            final_distances = distance_func(A_gpu[candidates], x)
+        # Process all candidates together
+        if candidate_indices_list:
+            candidates = cp.concatenate(candidate_indices_list)
+            candidate_points = cp.concatenate(candidate_vectors_list)
+            
+            # Find final top-K
+            final_distances = distance_func(candidate_points, x)
             final_indices = candidates[cp.argsort(final_distances)[:K]]
             results.append(final_indices.get())
         else:
@@ -69,4 +57,4 @@ def our_ann(N, D, A, X, K, distance_func, k1=None, k2=None):
             indices = cp.argsort(distances)[:K]
             results.append(indices.get())
     
-    return cp.array(results).T 
+    return cp.array(results).T
