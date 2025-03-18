@@ -304,8 +304,8 @@ def test_ann_detailed():
         print("\n=== Consistency Analysis ===")
         base_result = results[0]
         for t in range(1, T):
-            match_rate = np.mean([len(set(r1) & set(r2)) / K 
-                                for r1, r2 in zip(base_result, results[t])])
+            match_rate = np.mean([len(set(r1.tolist()) & set(r2.tolist())) / K for r1, r2 in zip(exact_results.T, ann_results.T)
+    ])
             print(f"Trial {t+1} match rate with Trial 1: {match_rate:.4f}")
     
     return results[0]

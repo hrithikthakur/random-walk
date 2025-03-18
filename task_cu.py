@@ -72,3 +72,14 @@ def our_ann(N, D, A, X, K, distance_func):
             results.append(indices.get())
     
     return cp.array(results).T
+
+def test_ann_detailed():
+    # ... existing code ...
+    
+    # Fix the match rate calculation
+    match_rate = np.mean([
+        len(set(r1.tolist()) & set(r2.tolist())) / K 
+        for r1, r2 in zip(exact_results.T, ann_results.T)
+    ])
+    
+    # ... rest of the code ...
