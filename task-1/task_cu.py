@@ -125,42 +125,64 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     return cp.asnumpy(final_indices)
 
 def our_ann(N, D, A, X, K, distance_func):
-    A = cp.asarray(A)
-    X = cp.asarray(X)
+    """
+    Improved ANN implementation based on PyTorch version
+    """
+    # Convert to GPU arrays
+    A_gpu = cp.asarray(A)
+    X_gpu = cp.asarray(X)
     
-    n_clusters = min(int(cp.sqrt(N).item()), N // 10)
+    # Fixed hyperparameters like PyTorch version
+    K1 = 4  # Number of clusters to check
+    K2 = 2000  # Candidates per cluster
     
-    centroids = our_kmeans(N, D, A, n_clusters, distance_func)
-    centroids = cp.asarray(centroids)
+    # Run k-means clustering
+    cluster_labels = our_kmeans(N, D, A_gpu, K)
+    centroids = cp.zeros((K, D))
     
-    db_distances = distance_func(A, centroids)
-    db_labels = cp.argmin(db_distances, axis=1)
+    # Compute centroids
+    for k in range(K):
+        mask = cluster_labels == k
+        if cp.any(mask):
+            centroids[k] = cp.mean(A_gpu[mask], axis=0)
     
-    final_indices = cp.zeros((X.shape[0], K), dtype=cp.int64)
-    
-    query_distances = distance_func(X, centroids)
-    
-    n_clusters_to_search = min(3, n_clusters)
-    
-    for i in range(X.shape[0]):
-        nearest_clusters = cp.argsort(query_distances[i])[:n_clusters_to_search]
+    # Process each query point
+    results = []
+    for x in X_gpu:
+        # Find K1 closest clusters
+        centroid_distances = distance_func(centroids, x)
+        closest_clusters = cp.argsort(centroid_distances)[:K1]
         
-        candidate_indices = cp.array([], dtype=cp.int64)
-        for cluster_idx in nearest_clusters:
-            cluster_points = cp.where(db_labels == cluster_idx)[0]
-            candidate_indices = cp.concatenate([candidate_indices, cluster_points])
+        # Gather candidates from all selected clusters
+        candidate_indices_list = []
+        candidate_vectors_list = []
         
-        if len(candidate_indices) < K:
-            remaining_points = cp.where(~cp.isin(cp.arange(N), candidate_indices))[0]
-            candidate_indices = cp.concatenate([candidate_indices, remaining_points])
+        for cluster_idx in closest_clusters:
+            indices = cp.where(cluster_labels == cluster_idx)[0]
+            points = A_gpu[indices]
+            
+            if len(points) > 0:
+                distances = distance_func(points, x)
+                nearest = cp.argsort(distances)[:min(len(points), K2)]
+                candidate_indices_list.append(indices[nearest])
+                candidate_vectors_list.append(points[nearest])
         
-        candidates = A[candidate_indices]
-        exact_distances = distance_func(X[i:i+1], candidates)
-        
-        nearest_k = cp.argsort(exact_distances[0])[:K]
-        final_indices[i] = candidate_indices[nearest_k]
+        # Process all candidates together
+        if candidate_indices_list:
+            candidates = cp.concatenate(candidate_indices_list)
+            candidate_points = cp.concatenate(candidate_vectors_list)
+            
+            # Find final top-K
+            final_distances = distance_func(candidate_points, x)
+            final_indices = candidates[cp.argsort(final_distances)[:K]]
+            results.append(final_indices.get())
+        else:
+            # Fallback to full search
+            distances = distance_func(A_gpu, x)
+            indices = cp.argsort(distances)[:K]
+            results.append(indices.get())
     
-    return cp.asnumpy(final_indices)
+    return cp.array(results).T
 
 def process_distance_func(arg):
     if arg == "cosine":
