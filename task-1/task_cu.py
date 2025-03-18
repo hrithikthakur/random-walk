@@ -135,7 +135,7 @@ def our_ann(N, D, A, X, K, distance_func):
     
     # Fixed hyperparameters
     K1 = 4  # Number of clusters to check
-    K2 = 20  # Candidates per cluster
+    K2 = 10  # Candidates per cluster
     
     # Run k-means clustering
     cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K, process_distance_func(args.dist)))
