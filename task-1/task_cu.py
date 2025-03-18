@@ -231,7 +231,7 @@ def test_knn_detailed():
     
     for _ in range(num_runs):
         start_time = time.time()
-        knn_result = our_knn(N, D, A, X, K)
+        knn_result = our_knn(N, D, A, X, K, process_distance_func(args.dist))
         times.append(time.time() - start_time)
     
     mean_time = np.mean(times)
@@ -292,81 +292,69 @@ def test_ann_detailed():
     return results[0]
 
 
-def recall_rate(exact_neighbors, approx_neighbors):
-    # convert to numpy arrays from cupy arrays if needed
-    if isinstance(exact_neighbors, cp.ndarray):
-        exact_neighbors = cp.asnumpy(exact_neighbors)
-    if isinstance(approx_neighbors, cp.ndarray):
-        approx_neighbors = cp.asnumpy(approx_neighbors)
-    
-    # convret to flat lists
-    exact_list = exact_neighbors.flatten().tolist()
-    approx_list = approx_neighbors.flatten().tolist()
-    
-    # calculate recall rate
-    correct_matches = len(set(exact_list) & set(approx_list))
-    return correct_matches / len(exact_list)
+def recall_rate(list1, list2):
+    return len(set(list1) & set(list2)) / len(list1)
 
 def recall_test(knn_function, ann_function, T=10):
     N, D, A, X, K = testdata_ann(args.testfile)
     
-    print("\nRunning recall test...")
-    print(f"N={N}, D={D}, K={K}")
+    # start
+    start_time = time.time()
+    knn_results = knn_function(N, D, A, X, K)
+    knn_time = time.time() - start_time
     
-    # knn
-    print("Computing exact KNN...")
-    knn_results = knn_function(N, D, A, X, K, process_distance_func(args.dist))
-    
-    # Run ANN multiple times
-    print(f"Computing ANN {T} times...")
     total_recall = 0.0
-    recalls = []
+    ann_total_time = 0.0
     
-    for t in range(T):
-        ann_results = ann_function(N, D, A, X, K, process_distance_func(args.dist))
-        recall = recall_rate(knn_results, ann_results)
-        recalls.append(recall)
-        total_recall += recall
-        print(f"Trial {t+1}: Recall = {recall:.4f}")
+    for _ in range(T):
+        start_time = time.time()
+        ann_results = ann_function(N, D, A, X, K)
+        ann_total_time += time.time() - start_time
+        total_recall += recall_rate(knn_results, ann_results)
     
-    avg_recall = total_recall / T
-    std_recall = np.std(recalls)
+    avg_recall = total_recall/T
+    avg_ann_time = ann_total_time/T
     
-    print(f"\nFinal Results:")
-    print(f"Average Recall: {avg_recall:.4f} ± {std_recall:.4f}")
-    print(f"Best Recall:    {max(recalls):.4f}")
-    print(f"Worst Recall:   {min(recalls):.4f}")
+    print(f"\n=== Recall Test Results ===")
+    print(f"Functions tested: {knn_function.__name__} vs {ann_function.__name__}")
+    print(f"Parameters: K={K}, T={T}")
+    print(f"Exact KNN time: {knn_time:.4f} seconds")
+    print(f"Average ANN time: {avg_ann_time:.4f} seconds")
+    print(f"Average speedup: {knn_time/avg_ann_time:.2f}x")
+    print(f"Average recall: {avg_recall:.4f}")
 
 
 def init_gpu():
+    """Initialize and warm up GPU"""
     try:
+        # Get device information
         device = cp.cuda.runtime.getDeviceProperties(0)
         print(f"\nGPU Device: {device['name'].decode()}")
-        print(f"Total Memory: {device['totalGlobalMem'] / 1e9:.2f} GB")
+        print(f"Compute Capability: {device['computeMajor']}.{device['computeMinor']}")
+        print(f"Memory: {device['totalGlobalMem'] / 1e9:.2f} GB")
         
+        # Set memory pool allocator
         cp.cuda.set_allocator(cp.cuda.MemoryPool().malloc)
         
+        # Warm up GPU
         x = cp.arange(1000)
-        x = cp.sum(x)
+        x = cp.sum(x)  # Force computation
         cp.cuda.Stream.null.synchronize()
         
         return True
     except cp.cuda.runtime.CUDARuntimeError:
-        print("CUDA path variables might not have been set correctly!")
+        print("No GPU found. Look into your CUDA PATH variables!")
         return False
     
 
 if __name__ == "__main__":
 
-    #warm up
     init_gpu()
     
-    print("Test Kmeans")
+    print("Starting task 1")
     test_kmeans_detailed()
-    print("Test KNN")
+    print("Starting task 2")
     test_knn_detailed()
-    print("Test ANN")
+    print("Starting task 3")
     test_ann_detailed()
-    print("Recall test")
-    recall_test(our_knn, our_ann_kmeans)
 
