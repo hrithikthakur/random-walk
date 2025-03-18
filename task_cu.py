@@ -1,5 +1,61 @@
+import numpy as np
+import time
+import argparse
+import os
+import glob
+
+# Try to import CuPy, but provide fallback if not available
+try:
+    import cupy as cp
+    CUPY_AVAILABLE = True
+except ImportError:
+    import numpy as cp  # Fallback to NumPy with same alias
+    CUPY_AVAILABLE = False
+
+# Global flag to track if GPU is working
+GPU_AVAILABLE = False
+
+def init_gpu():
+    """Initialize GPU and set up memory pool"""
+    try:
+        # Try to initialize GPU
+        device_id = cp.cuda.runtime.getDevice()
+        device_props = cp.cuda.runtime.getDeviceProperties(device_id)
+        
+        print(f"Using device: cuda")
+        print(f"Device {device_id}: {device_props['name'].decode()}")
+        print(f"Compute capability: {device_props['major']}.{device_props['minor']}")
+        
+        # Set memory pool allocator
+        cp.cuda.set_allocator(cp.cuda.MemoryPool().malloc)
+        
+        return True
+        
+    except Exception as e:
+        print(f"GPU initialization failed: {e}")
+        return False
+
+# Utility functions for array conversion
+def to_numpy(arr):
+    """Convert array to NumPy if it's CuPy"""
+    if GPU_AVAILABLE and isinstance(arr, cp.ndarray) and hasattr(arr, 'get'):
+        return arr.get()
+    return arr
+
+def array_equal(a, b):
+    """Compare arrays regardless of whether they're CuPy or NumPy"""
+    a_np = to_numpy(a)
+    b_np = to_numpy(b)
+    return np.array_equal(a_np, b_np)
+
+def asarray(arr):
+    """Convert to either CuPy or NumPy array depending on GPU availability"""
+    if GPU_AVAILABLE:
+        return cp.asarray(arr)
+    return np.asarray(arr)
+
 def cosine_distance(A, B):
-    """Compute cosine distance between points in A and B"""
+    """Compute cosine distance between points in A and B, works with either CuPy or NumPy"""
     # Normalize vectors
     A_norm = A / (cp.linalg.norm(A, axis=1, keepdims=True) + 1e-8)
     if A is B:
@@ -13,52 +69,146 @@ def cosine_distance(A, B):
     similarity = cp.dot(A_norm, B_norm.T)
     return 1 - similarity
 
-def our_ann(N, D, A, X, K, metric='l2'):
+def our_kmeans(N, D, A, K, metric='l2', max_iter=100):
+    """K-means clustering with either CuPy or NumPy"""
+    # Convert input to appropriate array type
+    A = asarray(A)
+    
+    # Initialize centroids by selecting K random data points
+    idx = cp.random.choice(N, K, replace=False)
+    centroids = A[idx].copy()
+    
+    # Distance function based on metric
+    if metric == 'cosine':
+        distance_fn = lambda x, y: cosine_distance(x, y.reshape(1, -1)).ravel()
+    else:  # default to l2
+        distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
+    
+    # Iterative refinement
+    for _ in range(max_iter):
+        # Assign each point to nearest centroid
+        distances = cp.zeros((N, K))
+        for k in range(K):
+            distances[:, k] = distance_fn(A, centroids[k])
+        labels = cp.argmin(distances, axis=1)
+        
+        # Update centroids
+        new_centroids = cp.zeros_like(centroids)
+        for k in range(K):
+            points = A[labels == k]
+            if len(points) > 0:
+                new_centroids[k] = cp.mean(points, axis=0)
+                if metric == 'cosine':
+                    # Normalize for cosine distance
+                    new_centroids[k] = new_centroids[k] / (cp.linalg.norm(new_centroids[k]) + 1e-8)
+            else:
+                # If a cluster is empty, reinitialize with a random point
+                new_centroids[k] = A[cp.random.randint(0, N)]
+        
+        # Check for convergence
+        if array_equal(centroids, new_centroids):
+            break
+        
+        centroids = new_centroids
+    
+    return labels
+
+def our_knn(N, D, A, X, K, metric='l2'):
+    """K-nearest neighbors with either CuPy or NumPy"""
+    # Convert inputs to appropriate array type
+    A = asarray(A)
+    X = asarray(X)
+    
+    results = []
+    
+    # Distance function based on metric
+    if metric == 'cosine':
+        for x in X:
+            distances = cosine_distance(A, x)
+            indices = cp.argsort(distances)[:K]
+            results.append(indices)
+    else:  # default to l2
+        for x in X:
+            distances = cp.linalg.norm(A - x, axis=1)
+            indices = cp.argsort(distances)[:K]
+            results.append(indices)
+    
+    return cp.array(results).T
+
+def our_ann(N, D, A, X, K, metric='l2', k1_factor=3.0, k2_factor=5.0, num_probe=3, ensure_recall=0.8):
     """
     Improved ANN implementation with better recall rate and distance metric options
-    Args:
-        metric: 'l2' for Euclidean distance or 'cosine' for cosine distance
-    """
-    # Hyperparameters tuned for better recall
-    K1 = min(int(np.sqrt(N)) * 3, N//5)    
-    K2 = min(K * 5, N//5)                  
-    num_probe = 3                          
+    Works with either CuPy or NumPy
     
-    # Ensure inputs are on GPU
-    A_gpu = cp.asarray(A)
-    X_gpu = cp.asarray(X)
+    Args:
+        N: Number of database points
+        D: Dimensions of points
+        A: Database points of shape (N, D)
+        X: Query points of shape (M, D)
+        K: Number of nearest neighbors to find
+        metric: Distance metric ('l2' or 'cosine')
+        k1_factor: Controls number of clusters (higher = more clusters = higher recall but slower)
+        k2_factor: Controls candidates per cluster (higher = more candidates = higher recall but slower)
+        num_probe: Number of closest clusters to search
+        ensure_recall: Target minimum recall rate (0-1.0, higher values enable more exhaustive search)
+    
+    Returns:
+        Array of indices of shape (K, M) where M is number of query points
+    """
+    # Convert inputs to appropriate array type
+    A = asarray(A)
+    X = asarray(X)
+    M = X.shape[0]  # Number of query points
+    
+    # Adaptive hyperparameters based on dataset characteristics
+    density_factor = min(1.0, 10000 / N)  # Adjust based on dataset size
+    dim_factor = min(1.0, 100 / D)        # Adjust based on dimensionality
+    
+    # Apply factors with user control
+    K1 = max(5, min(int(np.sqrt(N) * k1_factor * density_factor), N//3))
+    K2 = max(K * 2, min(int(K * k2_factor * dim_factor), N//3))
+    num_probe = max(1, min(num_probe, K1-1))
+    
+    print(f"ANN parameters - Clusters (K1): {K1}, Candidates per cluster (K2): {K2}, Probe depth: {num_probe}")
     
     # Distance function based on metric
     if metric == 'cosine':
         distance_fn = lambda x, y: cosine_distance(x, y)
+        # Normalize vectors for cosine similarity
+        A = A / (cp.linalg.norm(A, axis=1, keepdims=True) + 1e-8)
+        X = X / (cp.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
     else:  # default to l2
         distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
     
-    # Step 1: Better Clustering
+    # Step 1: Better Clustering with multiple restarts
     best_labels = None
     best_centroids = None
     best_distortion = float('inf')
     
-    for _ in range(3):
-        cluster_labels = our_kmeans(N, D, A_gpu, K1, metric=metric)
+    print("Running k-means clustering...")
+    for restart in range(3):  # Multiple restarts to find better clustering
+        cluster_labels = our_kmeans(N, D, A, K1, metric=metric)
         centroids = cp.zeros((K1, D))
         
+        # Compute centroids
         for k in range(K1):
             mask = cluster_labels == k
             if cp.any(mask):
-                centroids[k] = cp.mean(A_gpu[mask], axis=0)
+                centroids[k] = cp.mean(A[mask], axis=0)
+                if metric == 'cosine':
+                    centroids[k] = centroids[k] / (cp.linalg.norm(centroids[k]) + 1e-8)
         
-        # Calculate distortion using selected metric
+        # Calculate distortion
         distortion = 0
         for k in range(K1):
             mask = cluster_labels == k
             if cp.any(mask):
-                cluster_points = A_gpu[mask]
+                cluster_points = A[mask]
                 if metric == 'cosine':
-                    distances = cp.sum(cosine_distance(cluster_points, centroids[k]))
+                    dist = cp.sum(1 - cp.dot(cluster_points, centroids[k]))
                 else:
-                    distances = cp.sum((cluster_points - centroids[k]) ** 2)
-                distortion += distances.get()
+                    dist = cp.sum(cp.sum((cluster_points - centroids[k])**2, axis=1))
+                distortion += float(dist)
         
         if distortion < best_distortion:
             best_distortion = distortion
@@ -68,19 +218,50 @@ def our_ann(N, D, A, X, K, metric='l2'):
     cluster_labels = best_labels
     centroids = best_centroids
     
+    # Analyze cluster sizes for balanced probing
+    cluster_sizes = cp.array([cp.sum(cluster_labels == k) for k in range(K1)])
+    if GPU_AVAILABLE:
+        cluster_sizes_np = cluster_sizes.get()
+    else:
+        cluster_sizes_np = cluster_sizes
+    avg_size = float(cp.mean(cluster_sizes))
+    
+    print(f"Cluster stats - Avg size: {avg_size:.1f}, Min: {cp.min(cluster_sizes)}, Max: {cp.max(cluster_sizes)}")
+    
     # Step 2: Process each query point
     results = []
-    for x in X_gpu:
+    
+    # Track recall quality
+    if ensure_recall > 0:
+        # Get exact results for a small subset to adapt parameters
+        sample_size = min(3, M)
+        print(f"Computing ground truth for {sample_size} sample queries to validate recall...")
+        validation_indices = cp.arange(min(sample_size, M))
+        exact_results = []
+        for x_idx in validation_indices:
+            distances = distance_fn(A, X[x_idx])
+            exact_indices = cp.argsort(distances)[:K]
+            if GPU_AVAILABLE:
+                exact_results.append(exact_indices.get())
+            else:
+                exact_results.append(exact_indices)
+    
+    print(f"Processing {M} query points...")
+    for x_idx, x in enumerate(X):
         # Find distances to all centroids using selected metric
         if metric == 'cosine':
             centroid_distances = cosine_distance(centroids, x).ravel()
         else:
             centroid_distances = cp.linalg.norm(centroids - x, axis=1)
         
-        cluster_sizes = cp.array([cp.sum(cluster_labels == k) for k in range(K1)])
-        nearest_clusters = []
+        # Weight clusters by size (prefer searching smaller clusters first)
+        adjusted_distances = centroid_distances * (cluster_sizes / avg_size) ** 0.3
         
-        sorted_clusters = cp.argsort(centroid_distances)
+        # Find nearest clusters with sufficient points
+        nearest_clusters = []
+        sorted_clusters = cp.argsort(adjusted_distances)
+        
+        # Select clusters to probe
         for c in sorted_clusters:
             if len(nearest_clusters) >= num_probe:
                 break
@@ -90,7 +271,7 @@ def our_ann(N, D, A, X, K, metric='l2'):
         # Step 3: Gather candidates with dynamic K2
         candidates = []
         for cluster_idx in nearest_clusters:
-            cluster_points = A_gpu[cluster_labels == cluster_idx]
+            cluster_points = A[cluster_labels == cluster_idx]
             cluster_indices = cp.where(cluster_labels == cluster_idx)[0]
             
             if len(cluster_points) == 0:
@@ -99,294 +280,561 @@ def our_ann(N, D, A, X, K, metric='l2'):
             # Calculate distances using selected metric
             distances = distance_fn(cluster_points, x)
             
-            local_K2 = min(K2, len(cluster_points))
+            # Adaptively select more candidates from large clusters
+            size_ratio = float(cluster_sizes[cluster_idx]) / avg_size
+            local_K2 = min(int(K2 * size_ratio), len(cluster_points))
+            local_K2 = max(K, local_K2)  # Ensure we get at least K candidates
+            
             nearest = cp.argsort(distances)[:local_K2]
-            candidates.extend(cluster_indices[nearest].get().tolist())
+            if GPU_AVAILABLE:
+                candidates.extend(cluster_indices[nearest].get().tolist())
+            else:
+                candidates.extend(cluster_indices[nearest].tolist())
         
         # Step 4: Enhanced refinement
         if len(candidates) < K * 2:
+            # If we don't have enough candidates, probe more clusters
             remaining_clusters = [c for c in cp.argsort(centroid_distances) 
                                if c not in nearest_clusters]
             
             for cluster_idx in remaining_clusters:
-                if len(candidates) >= K * 3:
+                if len(candidates) >= K * 2:
                     break
+                cluster_points = A[cluster_labels == cluster_idx]
                 cluster_indices = cp.where(cluster_labels == cluster_idx)[0]
-                candidates.extend(cluster_indices.get().tolist()[:K])
+                
+                if len(cluster_points) == 0:
+                    continue
+                
+                distances = distance_fn(cluster_points, x)
+                more_indices = cp.argsort(distances)[:K]
+                if GPU_AVAILABLE:
+                    candidates.extend(cluster_indices[more_indices].get().tolist())
+                else:
+                    candidates.extend(cluster_indices[more_indices].tolist())
         
-        # Final selection using selected metric
+        # If using recall validation, check and potentially boost search
+        if ensure_recall > 0 and x_idx in validation_indices:
+            validation_idx = int(cp.where(validation_indices == x_idx)[0])
+            
+            # Keep expanding search until we reach target recall
+            current_recall = 0
+            probe_expansion = 1
+            exact_indices = exact_results[validation_idx]
+            
+            while current_recall < ensure_recall and probe_expansion <= 5:
+                # Final selection using selected metric
+                if candidates:
+                    candidates = cp.array(candidates)
+                    candidate_points = A[candidates]
+                    final_distances = distance_fn(candidate_points, x)
+                    final_indices = candidates[cp.argsort(final_distances)[:K]]
+                    
+                    if GPU_AVAILABLE:
+                        result = final_indices.get()
+                    else:
+                        result = final_indices
+                    
+                    # Calculate recall
+                    intersection = len(set(result.flatten()) & set(exact_indices.flatten()))
+                    current_recall = intersection / K
+                    
+                    if current_recall >= ensure_recall:
+                        break
+                    
+                # If recall is too low, add more candidates
+                probe_expansion += 1
+                extra_clusters = sorted_clusters[num_probe:num_probe+probe_expansion]
+                for c in extra_clusters:
+                    cluster_points = A[cluster_labels == c]
+                    cluster_indices = cp.where(cluster_labels == c)[0]
+                    
+                    if len(cluster_points) == 0:
+                        continue
+                    
+                    distances = distance_fn(cluster_points, x)
+                    more_indices = cp.argsort(distances)[:K2]
+                    if GPU_AVAILABLE:
+                        candidates.extend(cluster_indices[more_indices].get().tolist())
+                    else:
+                        candidates.extend(cluster_indices[more_indices].tolist())
+                
+                # De-duplicate candidates
+                candidates = list(set(candidates))
+            
+            print(f"Sample query {validation_idx}: Achieved recall {current_recall:.2f} with {probe_expansion} expansion steps")
+            
+            # Update parameters based on validation results
+            if current_recall < ensure_recall:
+                # Boost parameters for remaining queries
+                num_probe = min(num_probe + 1, K1 - 1)
+                K2 = int(K2 * 1.5)
+                print(f"Boosting search parameters - New probe depth: {num_probe}, candidates: {K2}")
+        
+        # Final selection using appropriate metric
         if candidates:
             candidates = cp.array(candidates)
-            candidate_points = A_gpu[candidates]
+            candidate_points = A[candidates]
+            final_distances = distance_fn(candidate_points, x)
+            final_indices = candidates[cp.argsort(final_distances)[:K]]
+            
+            if GPU_AVAILABLE:
+                results.append(final_indices.get())
+            else:
+                results.append(final_indices)
+        else:
+            # Fallback to brute force for this query
+            distances = distance_fn(A, x)
+            indices = cp.argsort(distances)[:K]
+            
+            if GPU_AVAILABLE:
+                results.append(indices.get())
+            else:
+                results.append(indices)
+    
+    return cp.array(results).T
+
+def recall_rate(exact_nn, approx_nn):
+    """Calculate recall rate between exact and approximate nearest neighbors"""
+    # Convert to numpy and flatten
+    if GPU_AVAILABLE and isinstance(exact_nn, cp.ndarray) and hasattr(exact_nn, 'get'):
+        exact_nn = exact_nn.get()
+    if GPU_AVAILABLE and isinstance(approx_nn, cp.ndarray) and hasattr(approx_nn, 'get'):
+        approx_nn = approx_nn.get()
+    
+    # Ensure both are flattened
+    exact_nn = np.array(exact_nn).flatten()
+    approx_nn = np.array(approx_nn).flatten()
+    
+    # Calculate intersection size
+    intersection = len(set(exact_nn).intersection(set(approx_nn)))
+    recall = intersection / len(exact_nn)
+    return recall
+
+def process_distance_func(dist_name):
+    """Convert distance function name to internal format"""
+    if dist_name == 'cosine':
+        return 'cosine'
+    else:
+        return 'l2'  # default
+
+def testdata_ann(testfile):
+    """Load ANN test data"""
+    print(f"Loading ANN test data from {testfile}")
+    data = np.load(testfile)
+    N = data['N']
+    D = data['D']
+    A = data['A']
+    X = data['X']
+    K = data['K']
+    return N, D, A, X, K
+
+def test_kmeans_detailed():
+    """Run detailed K-means test with specified test file"""
+    N, D, A, K = np.random.randint(800, 1200), 100, np.random.random((1000, 100)), 10
+    
+    if args.testfile:
+        data = np.load(args.testfile)
+        N = data['N']
+        D = data['D']
+        A = data['A']
+        K = min(int(np.sqrt(N)), 20)  # reasonable K value
+    
+    metric = process_distance_func(args.dist) if hasattr(args, 'dist') else 'l2'
+    
+    print("\nK-Means Clustering Test:")
+    print(f"Number of points (N): {N}")
+    print(f"Dimensions (D): {D}")
+    print(f"Number of clusters (K): {K}")
+    print(f"Data shape: {A.shape}")
+    print(f"Distance metric: {metric}")
+    
+    # Time the execution
+    start_time = time.time()
+    kmeans_result = our_kmeans(N, D, A, K, metric)
+    elapsed = time.time() - start_time
+    
+    # Verify results and provide information
+    if kmeans_result is not None:
+        print(f"K-means execution time: {elapsed:.4f} seconds")
+        
+        # Convert to numpy for analysis
+        result_np = to_numpy(kmeans_result)
+        
+        # Analyze cluster distribution
+        unique_labels, counts = np.unique(result_np, return_counts=True)
+        print(f"Number of clusters formed: {len(unique_labels)}")
+        print(f"Average cluster size: {np.mean(counts):.1f} points")
+        print(f"Largest cluster: {np.max(counts)} points")
+        print(f"Smallest cluster: {np.min(counts)} points")
+    else:
+        print("K-means failed to produce results")
+
+def test_ann_methods():
+    """Test and compare different ANN methods with different distance metrics"""
+    print("\nTesting ANN methods...")
+    
+    try:
+        N, D, A, X, K = testdata_ann(args.testfile)
+    except:
+        print("Error loading test data, using random data")
+        N, D = 1000, 50
+        A = np.random.random((N, D))
+        X = np.random.random((5, D))
+        K = 10
+    
+    # Get the distance metric from args
+    metric = process_distance_func(args.dist) if hasattr(args, 'dist') else 'l2'
+    
+    # Get parameters from args or use defaults
+    k1_factor = float(args.k1) if hasattr(args, 'k1') else 3.0
+    k2_factor = float(args.k2) if hasattr(args, 'k2') else 5.0
+    num_probe = int(args.probe) if hasattr(args, 'probe') else 3
+    ensure_recall = float(args.recall) if hasattr(args, 'recall') else 0.0
+    
+    print(f"\nTesting with {metric} distance:")
+    print(f"Dataset: N={N}, D={D}, Query points={X.shape[0]}, K={K}")
+    print(f"Parameters: k1_factor={k1_factor}, k2_factor={k2_factor}, probe={num_probe}, target_recall={ensure_recall}")
+    
+    # Get ground truth
+    print("Computing exact KNN (ground truth)...")
+    start_time = time.time()
+    exact_results = our_knn(N, D, A, X, K, metric=metric)
+    exact_time = time.time() - start_time
+    print(f"Exact KNN time: {exact_time:.4f} seconds")
+    
+    # Test ANN implementation
+    print("\nTesting our ANN implementation...")
+    start_time = time.time()
+    ann_results = our_ann(N, D, A, X, K, metric=metric, 
+                         k1_factor=k1_factor, k2_factor=k2_factor, 
+                         num_probe=num_probe, ensure_recall=ensure_recall)
+    ann_time = time.time() - start_time
+    
+    recalls = []
+    for i in range(X.shape[0]):
+        recall = recall_rate(exact_results[:, i], ann_results[:, i])
+        recalls.append(recall)
+    
+    mean_recall = np.mean(recalls)
+    std_recall = np.std(recalls)
+    speedup = exact_time / ann_time if ann_time > 0 else 0
+    
+    print(f"\nResults Summary:")
+    print(f"ANN time: {ann_time:.4f} seconds")
+    print(f"Speedup: {speedup:.2f}x")
+    print(f"Recall ({metric}): {mean_recall:.4f} ± {std_recall:.4f}")
+    print(f"Min recall: {min(recalls):.4f}, Max recall: {max(recalls):.4f}")
+
+def our_ann_efficient(N, D, A, X, K, metric='l2', k1_factor=3.0, k2_factor=6.0):
+    """
+    Efficient ANN implementation with optimized recall rate
+    Assumes GPU is always available
+    
+    Args:
+        N: Number of database points
+        D: Dimensions of points
+        A: Database points of shape (N, D)
+        X: Query points of shape (M, D)
+        K: Number of nearest neighbors to find
+        metric: Distance metric ('l2' or 'cosine')
+        k1_factor: Controls number of clusters (higher = more clusters = higher recall)
+        k2_factor: Controls candidates per cluster (higher = more candidates = higher recall)
+    
+    Returns:
+        Array of indices of shape (K, M) where M is number of query points
+    """
+    # Convert inputs to CuPy arrays
+    A = cp.asarray(A)
+    X = cp.asarray(X)
+    M = X.shape[0]  # Number of query points
+    
+    # Compute optimal parameters for dataset characteristics
+    K1 = max(5, min(int(np.sqrt(N) * k1_factor), N//4))
+    K2 = max(K * 2, min(int(K * k2_factor), N//4))
+    n_probe = max(2, min(K1//4, 5))  # Fixed probe depth, optimized for recall/performance
+    
+    print(f"ANN parameters: K1={K1}, K2={K2}, probe={n_probe}")
+    
+    # Setup distance function and normalize if needed
+    if metric == 'cosine':
+        distance_fn = lambda x, y: cosine_distance(x, y)
+        A = A / (cp.linalg.norm(A, axis=1, keepdims=True) + 1e-8)
+        X = X / (cp.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    else:  # default to l2
+        distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
+    
+    # Run k-means clustering once with better initialization
+    cluster_labels = our_kmeans(N, D, A, K1, metric=metric)
+    centroids = cp.zeros((K1, D))
+    
+    # Compute centroids and analyze cluster sizes
+    cluster_sizes = cp.zeros(K1)
+    for k in range(K1):
+        mask = cluster_labels == k
+        size = cp.sum(mask)
+        cluster_sizes[k] = size
+        if size > 0:
+            centroids[k] = cp.mean(A[mask], axis=0)
+            if metric == 'cosine':
+                centroids[k] = centroids[k] / (cp.linalg.norm(centroids[k]) + 1e-8)
+    
+    min_size = int(cp.min(cluster_sizes))
+    max_size = int(cp.max(cluster_sizes))
+    avg_size = float(cp.mean(cluster_sizes))
+    print(f"Cluster stats: avg={avg_size:.1f}, min={min_size}, max={max_size}")
+    
+    # Process queries in batch for efficiency
+    results = []
+    for x in X:
+        # Find closest clusters
+        distances_to_centroids = distance_fn(centroids, x)
+        closest_clusters = cp.argsort(distances_to_centroids)[:n_probe]
+        
+        # Gather candidates from clusters
+        candidates = []
+        for cluster_idx in closest_clusters:
+            cluster_indices = cp.where(cluster_labels == cluster_idx)[0]
+            if len(cluster_indices) == 0:
+                continue
+                
+            # Select candidates from this cluster
+            cluster_points = A[cluster_indices]
+            cluster_distances = distance_fn(cluster_points, x)
+            
+            # Get more candidates from larger clusters
+            size_factor = min(3.0, cluster_sizes[cluster_idx] / avg_size)
+            local_k2 = min(int(K2 * size_factor), len(cluster_indices))
+            
+            nearest_in_cluster = cp.argsort(cluster_distances)[:local_k2]
+            candidates.extend(cluster_indices[nearest_in_cluster].get().tolist())
+        
+        # Fallback if we don't have enough candidates
+        if len(candidates) < K:
+            # Add points from other clusters
+            remaining = [c for c in range(K1) if c not in closest_clusters]
+            for c in remaining[:3]:  # Check up to 3 more clusters
+                cluster_indices = cp.where(cluster_labels == c)[0]
+                if len(cluster_indices) > 0:
+                    candidates.extend(cluster_indices.get().tolist()[:K])
+                if len(candidates) >= K * 3:
+                    break
+        
+        # Final refinement
+        if candidates:
+            candidates = cp.array(candidates)
+            candidate_points = A[candidates]
             final_distances = distance_fn(candidate_points, x)
             final_indices = candidates[cp.argsort(final_distances)[:K]]
             results.append(final_indices.get())
         else:
-            distances = distance_fn(A_gpu, x)
-            results.append(cp.argsort(distances)[:K].get())
+            # Fall back to full search
+            distances = distance_fn(A, x)
+            indices = cp.argsort(distances)[:K]
+            results.append(indices.get())
     
     return cp.array(results).T
 
-def our_ann_basic(N, D, A, X, K, metric='l2'):
-    """Basic ANN using random projections"""
-    # Convert to GPU
-    A_gpu = cp.asarray(A)
-    X_gpu = cp.asarray(X)
+def test_ann_efficient():
+    """Test the efficient ANN implementation"""
+    print("\nTesting Efficient ANN...")
     
-    # Distance function based on metric
-    if metric == 'cosine':
-        distance_fn = lambda x, y: cosine_distance(x, y)
-        # Normalize vectors for cosine similarity
-        A_gpu = A_gpu / (cp.linalg.norm(A_gpu, axis=1, keepdims=True) + 1e-8)
-        X_gpu = X_gpu / (cp.linalg.norm(X_gpu, axis=1, keepdims=True) + 1e-8)
-    else:  # default to l2
-        distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
+    try:
+        N, D, A, X, K = testdata_ann(args.testfile)
+    except:
+        print("Error loading test data, using random data")
+        N, D = 1000, 50
+        A = np.random.random((N, D))
+        X = np.random.random((5, D))
+        K = 10
     
-    # Generate random projection matrix
-    num_projections = min(D, 32)  # Reduce dimensionality
-    P = cp.random.randn(D, num_projections)
-    
-    # Project data to lower dimension
-    A_proj = cp.dot(A_gpu, P)
-    X_proj = cp.dot(X_gpu, P)
-    
-    results = []
-    for x in X_proj:
-        # Find approximate distances in projected space
-        distances = cp.linalg.norm(A_proj - x, axis=1)
-        # Get more candidates than needed
-        candidate_indices = cp.argsort(distances)[:K*2]
-        
-        # Refine in original space using appropriate metric
-        candidates = A_gpu[candidate_indices]
-        true_distances = distance_fn(candidates, X_gpu[0])
-        final_indices = candidate_indices[cp.argsort(true_distances)[:K]]
-        results.append(final_indices.get())
-    
-    return cp.array(results).T
-
-def our_ann_kmeans(N, D, A, X, K, metric='l2'):
-    """K-means based ANN with improved recall"""
-    # Hyperparameters
-    K1 = min(int(np.sqrt(N)) * 3, N//5)    # Number of clusters
-    K2 = min(K * 5, N//5)                  # Candidates per cluster
-    num_probe = 3                          # Number of clusters to probe
-    
-    # Convert to GPU
-    A_gpu = cp.asarray(A)
-    X_gpu = cp.asarray(X)
-    
-    # Distance function based on metric
-    if metric == 'cosine':
-        distance_fn = lambda x, y: cosine_distance(x, y)
-        # Normalize vectors for cosine similarity
-        A_gpu = A_gpu / (cp.linalg.norm(A_gpu, axis=1, keepdims=True) + 1e-8)
-        X_gpu = X_gpu / (cp.linalg.norm(X_gpu, axis=1, keepdims=True) + 1e-8)
-    else:  # default to l2
-        distance_fn = lambda x, y: cp.linalg.norm(x - y, axis=1)
-    
-    # Clustering with multiple restarts
-    best_labels = None
-    best_centroids = None
-    best_distortion = float('inf')
-    
-    for _ in range(3):
-        cluster_labels = our_kmeans(N, D, A_gpu, K1, metric=metric)
-        centroids = cp.zeros((K1, D))
-        
-        for k in range(K1):
-            mask = cluster_labels == k
-            if cp.any(mask):
-                centroids[k] = cp.mean(A_gpu[mask], axis=0)
-                if metric == 'cosine':
-                    centroids[k] = centroids[k] / (cp.linalg.norm(centroids[k]) + 1e-8)
-        
-        # Calculate distortion using selected metric
-        distortion = 0
-        for k in range(K1):
-            mask = cluster_labels == k
-            if cp.any(mask):
-                cluster_points = A_gpu[mask]
-                distances = cp.sum(distance_fn(cluster_points, centroids[k]))
-                distortion += distances.get()
-        
-        if distortion < best_distortion:
-            best_distortion = distortion
-            best_labels = cluster_labels
-            best_centroids = centroids
-    
-    # Search using best clustering
-    results = []
-    for x in X_gpu:
-        candidates = []
-        centroid_distances = distance_fn(best_centroids, x)
-        nearest_clusters = cp.argsort(centroid_distances)[:num_probe]
-        
-        for cluster_idx in nearest_clusters:
-            cluster_points = A_gpu[best_labels == cluster_idx]
-            cluster_indices = cp.where(best_labels == cluster_idx)[0]
-            if len(cluster_points) == 0:
-                continue
-            
-            distances = distance_fn(cluster_points, x)
-            nearest = cp.argsort(distances)[:K2]
-            candidates.extend(cluster_indices[nearest].get().tolist())
-        
-        # Final refinement using appropriate metric
-        if candidates:
-            candidates = cp.array(candidates)
-            final_distances = distance_fn(A_gpu[candidates], x)
-            final_indices = candidates[cp.argsort(final_distances)[:K]]
-            results.append(final_indices.get())
-        else:
-            distances = distance_fn(A_gpu, x)
-            results.append(cp.argsort(distances)[:K].get())
-    
-    return cp.array(results).T
-
-def our_ann_lsh(N, D, A, X, K, metric='l2'):
-    """LSH-based ANN using either random hyperplanes (cosine) or random projections (L2)"""
-    # LSH parameters
-    num_tables = 8          # Number of hash tables
-    num_bits = 16          # Number of bits per hash
-    
-    # Convert to GPU
-    A_gpu = cp.asarray(A)
-    X_gpu = cp.asarray(X)
-    
-    if metric == 'cosine':
-        # For cosine similarity, normalize vectors first
-        A_norm = A_gpu / (cp.linalg.norm(A_gpu, axis=1, keepdims=True) + 1e-8)
-        X_norm = X_gpu / (cp.linalg.norm(X_gpu, axis=1, keepdims=True) + 1e-8)
-        
-        # Generate random unit vectors for SimHash
-        hyperplanes = cp.random.randn(num_tables, num_bits, D)
-        hyperplanes = hyperplanes / cp.linalg.norm(hyperplanes, axis=2, keepdims=True)
-        
-        # Hash database points using SimHash
-        A_hashes = []
-        for i in range(num_tables):
-            # SimHash: sign(dot product with random unit vectors)
-            projections = cp.dot(A_norm, hyperplanes[i].T)
-            hash_bits = (projections > 0).astype(cp.int32)
-            hash_values = cp.packbits(hash_bits, axis=1)
-            A_hashes.append(hash_values)
-    else:
-        # For L2 distance, use random projections
-        # Scale factor for better L2 distance preservation
-        scale = cp.sqrt(D)
-        hyperplanes = cp.random.randn(num_tables, num_bits, D) / scale
-        
-        # Hash database points using L2LSH
-        A_hashes = []
-        for i in range(num_tables):
-            projections = cp.dot(A_gpu, hyperplanes[i].T)
-            # Quantize projections for L2LSH
-            hash_bits = ((projections + 0.5) > 0).astype(cp.int32)
-            hash_values = cp.packbits(hash_bits, axis=1)
-            A_hashes.append(hash_values)
-    
-    results = []
-    for x_idx, x in enumerate(X_gpu):
-        candidates = set()
-        
-        # Normalize query point for cosine similarity
-        if metric == 'cosine':
-            x = x / (cp.linalg.norm(x) + 1e-8)
-        
-        # Hash query point
-        for i in range(num_tables):
-            proj = cp.dot(x, hyperplanes[i].T)
-            if metric == 'cosine':
-                hash_bits = (proj > 0).astype(cp.int32)
-            else:
-                hash_bits = ((proj + 0.5) > 0).astype(cp.int32)
-            x_hash = cp.packbits(hash_bits)
-            
-            # Find points with matching hashes
-            matches = cp.where(A_hashes[i] == x_hash)[0]
-            candidates.update(matches.get().tolist())
-        
-        # If too few candidates, add more from other hash buckets
-        if len(candidates) < K * 2:
-            for i in range(num_tables):
-                proj = cp.dot(x, hyperplanes[i].T)
-                if metric == 'cosine':
-                    hash_bits = (proj > 0).astype(cp.int32)
-                else:
-                    hash_bits = ((proj + 0.5) > 0).astype(cp.int32)
-                x_hash = cp.packbits(hash_bits)
-                
-                # Find points with similar hashes (Hamming distance 1)
-                for bit in range(num_bits):
-                    altered_hash = x_hash ^ (1 << bit)
-                    matches = cp.where(A_hashes[i] == altered_hash)[0]
-                    candidates.update(matches.get().tolist())
-                if len(candidates) >= K * 3:
-                    break
-        
-        # Final refinement using the appropriate distance metric
-        if candidates:
-            candidates = cp.array(list(candidates))
-            if metric == 'cosine':
-                final_distances = cosine_distance(A_gpu[candidates], x)
-            else:
-                final_distances = cp.linalg.norm(A_gpu[candidates] - x, axis=1)
-            final_indices = candidates[cp.argsort(final_distances)[:K]]
-            results.append(final_indices.get())
-        else:
-            # Fallback to full search with appropriate metric
-            if metric == 'cosine':
-                distances = cosine_distance(A_gpu, x)
-            else:
-                distances = cp.linalg.norm(A_gpu - x, axis=1)
-            results.append(cp.argsort(distances)[:K].get())
-    
-    return cp.array(results).T
-
-def test_ann_methods():
-    """Test and compare different ANN methods with different distance metrics"""
-    print("\nTesting different ANN methods...")
-    N, D, A, X, K = testdata_ann(args.testfile)
-    
-    # Get the distance metric from args
+    # Get parameters
     metric = process_distance_func(args.dist) if hasattr(args, 'dist') else 'l2'
-    print(f"\nTesting with {metric} distance:")
+    k1_factor = float(args.k1) if hasattr(args, 'k1') else 3.0
+    k2_factor = float(args.k2) if hasattr(args, 'k2') else 6.0
+    
+    print(f"\nDataset: N={N}, D={D}, Queries={X.shape[0]}, K={K}")
+    print(f"Using {metric} distance, k1={k1_factor}, k2={k2_factor}")
     
     # Get ground truth
-    print("Computing exact KNN (ground truth)...")
+    print("Computing exact KNN...")
+    start_time = time.time()
     exact_results = our_knn(N, D, A, X, K, metric=metric)
+    exact_time = time.time() - start_time
+    print(f"Exact KNN time: {exact_time:.4f}s")
     
+    # Test efficient ANN
+    print("\nRunning efficient ANN...")
+    start_time = time.time()
+    ann_results = our_ann_efficient(N, D, A, X, K, metric=metric, k1_factor=k1_factor, k2_factor=k2_factor)
+    ann_time = time.time() - start_time
+    
+    # Evaluate results
+    recalls = []
+    for i in range(X.shape[0]):
+        # Convert arrays to NumPy for recall calculation
+        exact_np = exact_results[:, i].get()
+        ann_np = ann_results[:, i].get()
+        recall = recall_rate(exact_np, ann_np)
+        recalls.append(recall)
+    
+    mean_recall = np.mean(recalls)
+    speedup = exact_time / ann_time if ann_time > 0 else 0
+    
+    print(f"\nResults:")
+    print(f"ANN time: {ann_time:.4f}s (speedup: {speedup:.2f}x)")
+    print(f"Average recall: {mean_recall:.4f}")
+
+def test_ann_benchmark():
+    """
+    Comprehensive benchmark for ANN implementations
+    Tests performance, recall, and memory usage for different configurations
+    """
+    print("\n========== ANN BENCHMARK ==========")
+    
+    try:
+        print("Loading test data...")
+        N, D, A, X, K = testdata_ann(args.testfile)
+    except:
+        print("Error loading test data, using random data")
+        N, D = 1000, 100
+        A = np.random.random((N, D))
+        X = np.random.random((10, D))
+        K = 10
+    
+    # Get parameters
+    metric = process_distance_func(args.dist) if hasattr(args, 'dist') else 'l2'
+    k1_factor = float(args.k1) if hasattr(args, 'k1') else 3.0
+    k2_factor = float(args.k2) if hasattr(args, 'k2') else 6.0
+    
+    print(f"\nDATASET INFO:")
+    print(f"  Points (N): {N}")
+    print(f"  Dimensions (D): {D}")
+    print(f"  Queries: {X.shape[0]}")
+    print(f"  Neighbors (K): {K}")
+    print(f"  Distance metric: {metric}")
+    
+    # Get ground truth with exact KNN
+    print("\nComputing exact KNN (ground truth)...")
+    start_time = time.time()
+    exact_results = our_knn(N, D, A, X, K, metric=metric)
+    exact_time = time.time() - start_time
+    print(f"  Time: {exact_time:.4f}s")
+    
+    # Record benchmark results
+    results = {
+        'exact_knn': {
+            'time': exact_time,
+            'speedup': 1.0,
+            'recall': 1.0
+        }
+    }
+    
+    # Test ANN implementations
     methods = [
-        ("Basic ANN", our_ann_basic),
-        ("K-means ANN", our_ann_kmeans),
-        ("LSH ANN", our_ann_lsh)
+        ('Efficient ANN', our_ann_efficient, {'k1_factor': k1_factor, 'k2_factor': k2_factor}),
     ]
     
-    for name, method in methods:
+    # Add more methods if available in global scope
+    if 'our_ann' in globals():
+        methods.append(('Default ANN', our_ann, {'k1_factor': k1_factor, 'k2_factor': k2_factor}))
+    
+    # Run each method
+    for name, method, params in methods:
         print(f"\nTesting {name}...")
+        print(f"  Parameters: {params}")
+        
+        # Run timing test
         start_time = time.time()
-        try:
-            results = method(N, D, A, X, K, metric=metric)
-            elapsed = time.time() - start_time
-            
-            recalls = []
-            for i in range(X.shape[0]):
-                recall = recall_rate(exact_results[:, i], results[:, i])
-                recalls.append(recall)
-            
-            mean_recall = np.mean(recalls)
-            std_recall = np.std(recalls)
-            
-            print(f"Time: {elapsed:.4f} seconds")
-            print(f"Recall ({metric}): {mean_recall:.4f} ± {std_recall:.4f}")
-        except Exception as e:
-            print(f"Error testing {name}: {str(e)}")
+        ann_results = method(N, D, A, X, K, metric=metric, **params)
+        ann_time = time.time() - start_time
+        
+        # Calculate recall rates
+        recalls = []
+        for i in range(X.shape[0]):
+            exact_indices = exact_results[:, i].get()
+            ann_indices = ann_results[:, i].get()
+            recall = recall_rate(exact_indices, ann_indices)
+            recalls.append(recall)
+        
+        mean_recall = np.mean(recalls)
+        min_recall = np.min(recalls)
+        max_recall = np.max(recalls)
+        std_recall = np.std(recalls)
+        speedup = exact_time / ann_time
+        
+        # Store results
+        results[name] = {
+            'time': ann_time,
+            'speedup': speedup,
+            'recall_mean': mean_recall,
+            'recall_min': min_recall,
+            'recall_max': max_recall,
+            'recall_std': std_recall
+        }
+        
+        print(f"  Time: {ann_time:.4f}s")
+        print(f"  Speedup: {speedup:.2f}x")
+        print(f"  Recall: {mean_recall:.4f} ± {std_recall:.4f} (min={min_recall:.4f}, max={max_recall:.4f})")
+    
+    # Print comparison table
+    print("\n========== BENCHMARK RESULTS ==========")
+    print(f"{'Method':<20} {'Time (s)':<10} {'Speedup':<10} {'Recall':<10} {'Range':<15}")
+    print("-" * 70)
+    
+    for method, data in results.items():
+        if method == 'exact_knn':
+            recall_str = "1.0000"
+            range_str = "N/A"
+        else:
+            recall_str = f"{data['recall_mean']:.4f}"
+            range_str = f"{data['recall_min']:.2f}-{data['recall_max']:.2f}"
+        
+        print(f"{method:<20} {data['time']:<10.4f} {data['speedup']:<10.2f} {recall_str:<10} {range_str:<15}")
+    
+    # Print recommendations
+    print("\nRECOMMENDATIONS:")
+    for method, data in results.items():
+        if method == 'exact_knn':
             continue
+        
+        if data['speedup'] >= 10 and data['recall_mean'] >= 0.9:
+            print(f"✓ {method}: Excellent balance of speed and accuracy")
+        elif data['speedup'] >= 5 and data['recall_mean'] >= 0.8:
+            print(f"✓ {method}: Good balance of speed and accuracy")
+        elif data['speedup'] >= 20 and data['recall_mean'] >= 0.7:
+            print(f"✓ {method}: Great for speed-critical applications")
+        elif data['recall_mean'] >= 0.95:
+            print(f"✓ {method}: Great for accuracy-critical applications")
+        else:
+            print(f"  {method}: Average performance")
+    
+    return results
 
 if __name__ == "__main__":
-    if not init_gpu():
-        raise SystemExit("GPU initialization failed")
+    parser = argparse.ArgumentParser(description='KNN and ANN Testing')
+    parser.add_argument('--testfile', type=str, default=None, help='Test data file to use')
+    parser.add_argument('--dist', type=str, default='l2', help='Distance metric to use: l2, cosine')
+    parser.add_argument('--test', type=str, default='kmeans', help='Test to run: kmeans, ann, efficient, benchmark')
+    parser.add_argument('--k1', type=float, default=3.0, help='K1 factor for clusters in ANN')
+    parser.add_argument('--k2', type=float, default=6.0, help='K2 factor for candidates per cluster in ANN')
+    args = parser.parse_args()
     
-    print("\nTesting different ANN implementations...")
-    test_ann_methods() 
+    # Initialize GPU or fall back to CPU
+    init_gpu()
+    
+    if args.test == 'kmeans':
+        print("\nTest Kmeans")
+        test_kmeans_detailed()
+    elif args.test == 'ann':
+        print("\nTest ANN")
+        test_ann_methods()
+    elif args.test == 'efficient':
+        print("\nTest Efficient ANN")
+        test_ann_efficient()
+    elif args.test == 'benchmark':
+        print("\nBenchmark ANN")
+        test_ann_benchmark()
+    else:
+        print(f"Unknown test: {args.test}")
+        print("Available tests: kmeans, ann, efficient, benchmark") 
