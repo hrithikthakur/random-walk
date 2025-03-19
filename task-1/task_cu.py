@@ -138,15 +138,8 @@ def our_ann(N, D, A, X, K, distance_func):
     K2 = 10  # Candidates per cluster
     
     # Run k-means clustering
-    cluster_labels = cp.asarray(our_kmeans(N, D, A_gpu, K, process_distance_func(args.dist)))
-    centroids = cp.zeros((K, D))
-    
-    # Compute centroids
-    for k in range(K):
-        mask = cluster_labels == k
-        if cp.any(mask):
-            centroids[k] = cp.mean(A_gpu[mask], axis=0)
-    
+    centroids = cp.asarray(our_kmeans(N, D, A_gpu, K, process_distance_func(args.dist)))
+   
     # Calculate all centroid distances at once for all query points
     centroid_distances = distance_func(centroids, X_gpu)  # Shape: (K, M)
     closest_clusters = cp.argsort(centroid_distances, axis=0)[:K1]  # Shape: (K1, M)
@@ -155,34 +148,47 @@ def our_ann(N, D, A, X, K, distance_func):
     results = []
     for i in range(M):
         clusters = closest_clusters[:, i]
+
+def our_ann(N, D, A, X, K, distance_func):
+    """
+    Vectorized ANN implementation with batch distance calculations
+    """
+    # Convert to GPU arrays
+    A_gpu = cp.asarray(A)
+    X_gpu = cp.asarray(X)
+    M = X_gpu.shape[0]  # Number of query points
+    
+    # Fixed hyperparameters
+    K1 = 4  # Number of clusters to check
+    K2 = 3  # Candidates per cluster
+    
+    # Run k-means clustering
+    centroids = cp.asarray(our_kmeans(N, D, A_gpu, K, distance_func))
+   
+    # Calculate all centroid distances at once for all query points
+    centroid_distances = distance_func(centroids, X_gpu)  # Shape: (K, M)
+    closest_clusters = cp.argsort(centroid_distances, axis=0)[:K1]  # Shape: (K1, M)
+    
+    # Prepare to hold the final results
+    results = []
+    
+    # Process each query point
+    for i in range(M):
+        clusters = closest_clusters[:, i]
+        # Get the points in the clusters
+        cluster_points = A_gpu[clusters]
         
-        # Gather candidates from selected clusters
-        candidate_indices = []
-        for cluster_idx in clusters:
-            indices = cp.where(cluster_labels == cluster_idx)[0]
-            if len(indices) > 0:
-                points = A_gpu[indices]
-                # Calculate distances to all points in cluster at once
-                distances = distance_func(points, X_gpu[i:i+1])  # Keep 2D shape
-                nearest = cp.argsort(distances.ravel())[:min(len(indices), K2)]
-                candidate_indices.append(indices[nearest])
+        # Calculate the distance of the query point to each point in the closest clusters
+        cluster_distances = distance_func(cluster_points, X_gpu[i])
         
-        if candidate_indices:
-            # Concatenate all candidates
-            candidates = cp.concatenate(candidate_indices)
-            candidate_points = A_gpu[candidates]
-            
-            # Calculate final distances all at once
-            final_distances = distance_func(candidate_points, X_gpu[i:i+1]).ravel()
-            final_indices = candidates[cp.argsort(final_distances)[:K]]
-            results.append(final_indices.get())
-        else:
-            # Fallback: calculate all distances at once
-            distances = distance_func(A_gpu, X_gpu[i:i+1]).ravel()
-            indices = cp.argsort(distances)[:K]
-            results.append(indices.get())
+        # Get the closest K2 points from these clusters
+        closest_points = cp.argsort(cluster_distances)[:K2]
+        
+        # Append the result for the query point
+        results.append(closest_points)
     
     return cp.array(results).T
+
 def process_distance_func(arg):
     if arg == "cosine":
         return distance_cosine
