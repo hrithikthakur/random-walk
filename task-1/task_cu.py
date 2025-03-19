@@ -124,31 +124,26 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     
     return cp.asnumpy(final_indices)
 
-def our_ann(N, D, A, X, K, distance_func):
-    """
-    Vectorized ANN implementation with batch distance calculations
-    """
-    # Convert to GPU arrays
-    A_gpu = cp.asarray(A)
-    X_gpu = cp.asarray(X)
-    M = X_gpu.shape[0]  # Number of query points
-    
-    # Fixed hyperparameters
-    K1 = 4  # Number of clusters to check
-    K2 = 10  # Candidates per cluster
-    
-    # Run k-means clustering
-    centroids = cp.asarray(our_kmeans(N, D, A_gpu, K, process_distance_func(args.dist)))
-   
-    # Calculate all centroid distances at once for all query points
-    centroid_distances = distance_func(centroids, X_gpu)  # Shape: (K, M)
-    closest_clusters = cp.argsort(centroid_distances, axis=0)[:K1]  # Shape: (K1, M)
-    
-    # Process all query points at once
-    results = []
-    for i in range(M):
-        clusters = closest_clusters[:, i]
+import cupy as cp
+import numpy as np
 
+# Euclidean distance function
+def euclidean_distance(a, b):
+    return cp.linalg.norm(a - b, axis=1)
+
+# Mock k-means function (returns random centroids for illustration)
+def our_kmeans(N, D, A, K, distance_func):
+    # Just return random points as centroids for simplicity
+    return A[:K]
+
+# Example data
+N = 10  # Number of points in the dataset
+D = 2   # Dimension of each point
+K = 3   # Number of clusters
+A = cp.array([[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11]])  # Dataset (10 points)
+X = cp.array([[3, 3], [6, 6], [9, 9]])  # Query points (3 points)
+
+# Running the ANN function
 def our_ann(N, D, A, X, K, distance_func):
     """
     Vectorized ANN implementation with batch distance calculations
@@ -188,6 +183,12 @@ def our_ann(N, D, A, X, K, distance_func):
         results.append(closest_points)
     
     return cp.array(results).T
+
+# Run the function and print results
+results = our_ann(N, D, A, X, K, euclidean_distance)
+print("ANN results (indices of nearest neighbors):")
+print(results)
+
 
 def process_distance_func(arg):
     if arg == "cosine":
