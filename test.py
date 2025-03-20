@@ -33,7 +33,7 @@ def testdata_kmeans(test_file):
 
 def testdata_knn(test_file, M=1):
     if test_file == "":
-        N = 1000
+        N = 10000
         D = 100
         A = np.random.randn(N, D)
         X = np.random.randn(M, D)  # Already 2D with M query points
