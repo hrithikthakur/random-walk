@@ -55,7 +55,7 @@ def testdata_knn(test_file, M=1):
 def testdata_ann(test_file, M=1):
     if test_file == "":
         N = 1000
-        D = 100
+        D = 10
         A = np.random.randn(N, D)
         X = np.random.randn(M, D)  # Already 2D with M query points
         K = 10
