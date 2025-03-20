@@ -163,8 +163,8 @@ def our_ann(N, D, A, X, K, distance_func):
     M = X_gpu.shape[0]
     
 
-    K1 = 4 
-    K2 = 2000
+    K1 = 100
+    K2 = 200
     
     centroids = cp.asarray(our_kmeans(N, D, A_gpu, K, distance_func))
    
