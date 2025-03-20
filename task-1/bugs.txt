@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/home/s2030716/random-walk/task-1/task_cu.py", line 435, in <module>
+    recall_test(our_knn, our_ann)
+  File "/home/s2030716/random-walk/task-1/task_cu.py", line 387, in recall_test
+    ann_results = ann_function(N, D, A, X, K, process_distance_func(args.dist))
+  File "/home/s2030716/random-walk/task-1/task_cu.py", line 169, in our_ann
+    cluster_distances = distance_func(cluster_points, X_gpu[i])
+  File "/home/s2030716/random-walk/task-1/task_cu.py", line 29, in distance_l2
+    YY = cp.sum(Y ** 2, axis=1, keepdims=True)
+  File "/home/s2030716/miniconda3/envs/mls_cw/lib/python3.9/site-packages/cupy/_math/sumprod.py", line 40, in sum
+    return a.sum(axis, dtype, out, keepdims)
+  File "cupy/_core/core.pyx", line 1143, in cupy._core.core._ndarray_base.sum
+  File "cupy/_core/core.pyx", line 1152, in cupy._core.core._ndarray_base.sum
+  File "cupy/_core/_routines_math.pyx", line 112, in cupy._core._routines_math._ndarray_sum
+  File "cupy/cuda/cub.pyx", line 499, in cupy.cuda.cub.cub_reduction
+  File "cupy/cuda/cub.pyx", line 546, in cupy.cuda.cub.cub_reduction
+  File "cupy/_core/_reduction.pyx", line 141, in cupy._core._reduction._get_axis
+  File "cupy/_core/_reduction.pyx", line 151, in cupy._core._reduction._get_axis
+  File "cupy/_core/internal.pyx", line 438, in cupy._core.internal._normalize_axis_index
+numpy.exceptions.AxisError: axis 1 is out of bounds for array of dimension 1
