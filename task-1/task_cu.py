@@ -5,6 +5,9 @@ import numpy as np
 import time
 # import json
 import argparse
+import importlib
+import test
+importlib.reload(test)
 from test import testdata_kmeans, testdata_knn, testdata_ann
 
 parser = argparse.ArgumentParser()
