@@ -139,52 +139,18 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     
     return cp.asnumpy(final_indices)
 
-
-
-
-def our_kmeans(N, D, A, K, distance_func):
-    if A.shape[0] != N or A.shape[1] != D:
-        raise ValueError(f"Matrix A should have shape ({N}, {D}), but got {A.shape}")
-    if K > N:
-        raise ValueError(f"Cannot create {K} clusters with only {N} points")
-    
-    A = cp.asarray(A)
-    centroids = A[cp.random.choice(N, K, replace=False)]
-    max_iterations = 100
-    prev_centroids = None
-    
-    for _ in range(max_iterations):
-        distances = distance_func(A, centroids)
-        labels = cp.argmin(distances, axis=1)
-        new_centroids = cp.zeros_like(centroids)
-        for k in range(K):
-            mask = (labels == k)
-            if cp.any(mask):
-                new_centroids[k] = cp.mean(A[mask], axis=0)
-            else:
-                new_centroids[k] = centroids[k]
-        
-        if prev_centroids is not None and cp.allclose(new_centroids, prev_centroids):
-            break
-            
-        prev_centroids = new_centroids.copy()
-        centroids = new_centroids
-    
-    return cp.asnumpy(centroids)
-
-# Running the ANN function
 def our_ann(N, D, A, X, K, distance_func):
     """
-    Improved ANN implementation with proper index handling
+    Improved ANN implementation with better recall rate
     """
     A_gpu = cp.asarray(A)
     X_gpu = cp.asarray(X)
     M = X_gpu.shape[0]
     
-    # Use more clusters than K for better space partitioning
-    num_clusters = min(100, int(cp.sqrt(N)))  # Better value than just K
-    K1 = min(4, num_clusters)  # Check 4 closest clusters
-    K2 = min(1000, N//10)      # Check 1000 candidates per cluster
+    # CHANGE THESE VALUES TO INCREASE RECALL:
+    num_clusters = min(200, int(cp.sqrt(N) * 2))  # More clusters than before
+    K1 = min(8, num_clusters)                    # Check 8 clusters instead of 4
+    K2 = min(3000, N//5)                        # Check more candidates per cluster
     
     # Run k-means clustering with proper number of clusters
     centroids = cp.asarray(our_kmeans(N, D, A_gpu, num_clusters, distance_func))
@@ -197,6 +163,7 @@ def our_ann(N, D, A, X, K, distance_func):
     query_distances = distance_func(X_gpu, centroids)
     closest_clusters = cp.argsort(query_distances, axis=1)[:, :K1]
     
+    # Process each query with more thorough search
     results = []
     for i in range(M):
         x = X_gpu[i:i+1]  # Keep as 2D array
@@ -219,6 +186,23 @@ def our_ann(N, D, A, X, K, distance_func):
             
             # Add original indices to candidates
             candidates.extend(cluster_indices[nearest_indices].get().tolist())
+            
+        # If we don't have enough candidates, check more clusters
+        if len(candidates) < K * 5:
+            # Get more clusters beyond the K1 we already checked
+            more_clusters = cp.argsort(query_distances[i])[K1:K1+5]
+            for c in more_clusters:
+                cluster_indices = cp.where(cluster_labels == c)[0]
+                if len(cluster_indices) == 0:
+                    continue
+                
+                cluster_points = A_gpu[cluster_indices]
+                dists = distance_func(x, cluster_points)[0]
+                nearest_indices = cp.argsort(dists)[:K2//2]  # Use fewer candidates for extra clusters
+                candidates.extend(cluster_indices[nearest_indices].get().tolist())
+                
+                if len(candidates) >= K * 10:
+                    break
         
         # If we have candidates, find K nearest among them
         if candidates:
@@ -233,8 +217,6 @@ def our_ann(N, D, A, X, K, distance_func):
             results.append(cp.argsort(dists)[:K])
     
     return cp.array(results)
-
-
 
 def process_distance_func(arg):
     if arg == "cosine":
