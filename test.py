@@ -16,7 +16,7 @@ def ensure_2d(X, D):
 
 def testdata_kmeans(test_file):
     if test_file == "":
-        N = 1000
+        N = 10000
         D = 100
         A = np.random.randn(N, D)
         K = 10
