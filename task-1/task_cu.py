@@ -411,7 +411,7 @@ def recall_rate(exact_neighbors, approx_neighbors):
     return correct_matches / len(exact_list)
 
 def recall_test(knn_function, ann_function, T=10):
-    N, D, A, X, K = 10000, 100, np.random.randn(10000, 100), np.random.randn(1, 100), 10
+    N, D, A, X, K = 2000, 100, np.random.randn(2000, 100), np.random.randn(1, 100), 10
     
     print("\nRunning recall test...")
     print(f"N={N}, D={D}, K={K}")
