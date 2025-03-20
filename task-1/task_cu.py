@@ -25,11 +25,23 @@ def distance_cosine(X, Y):
     return 1 - similarity
 
 def distance_l2(X, Y):
+    """
+    Compute L2 distance between points in X and Y
+    Handles 1D arrays properly
+    """
+    # Ensure Y is 2D if it's a single point
+    if Y.ndim == 1:
+        Y = Y.reshape(1, -1)
+    
+    # Use broadcasting to compute distances
     XX = cp.sum(X ** 2, axis=1, keepdims=True)
     YY = cp.sum(Y ** 2, axis=1, keepdims=True)
-    distances = XX + YY.T - 2 * cp.dot(X, Y.T)
-    distances = cp.maximum(distances, 0)
-    return cp.sqrt(distances)
+    
+    # Calculate squared distances
+    distances = XX + YY.T - 2.0 * cp.dot(X, Y.T)
+    
+    # Return sqrt of distances for L2 norm
+    return cp.sqrt(cp.maximum(distances, 0.0))
 
 def distance_l2_inefficient(X, Y):
     X_expanded = cp.expand_dims(X, axis=1)
