@@ -124,8 +124,6 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     
     return cp.asnumpy(final_indices)
 
-import cupy as cp
-import numpy as np
 
 # Euclidean distance function
 def euclidean_distance(a, b):
@@ -148,46 +146,34 @@ def our_ann(N, D, A, X, K, distance_func):
     """
     Vectorized ANN implementation with batch distance calculations
     """
-    # Convert to GPU arrays
     A_gpu = cp.asarray(A)
     X_gpu = cp.asarray(X)
-    M = X_gpu.shape[0]  # Number of query points
+    M = X_gpu.shape[0]
     
-    # Fixed hyperparameters
-    K1 = 4  # Number of clusters to check
-    K2 = 3  # Candidates per cluster
+
+    K1 = 4 
+    K2 = 3 
     
-    # Run k-means clustering
     centroids = cp.asarray(our_kmeans(N, D, A_gpu, K, distance_func))
    
-    # Calculate all centroid distances at once for all query points
-    centroid_distances = distance_func(centroids, X_gpu)  # Shape: (K, M)
-    closest_clusters = cp.argsort(centroid_distances, axis=0)[:K1]  # Shape: (K1, M)
+
+    centroid_distances = distance_func(centroids, X_gpu)
+    closest_clusters = cp.argsort(centroid_distances, axis=0)[:K1]
     
-    # Prepare to hold the final results
     results = []
     
-    # Process each query point
     for i in range(M):
         clusters = closest_clusters[:, i]
-        # Get the points in the clusters
         cluster_points = A_gpu[clusters]
         
-        # Calculate the distance of the query point to each point in the closest clusters
         cluster_distances = distance_func(cluster_points, X_gpu[i])
         
-        # Get the closest K2 points from these clusters
         closest_points = cp.argsort(cluster_distances)[:K2]
         
-        # Append the result for the query point
         results.append(closest_points)
     
     return cp.array(results).T
 
-# Run the function and print results
-results = our_ann(N, D, A, X, K, euclidean_distance)
-print("ANN results (indices of nearest neighbors):")
-print(results)
 
 
 def process_distance_func(arg):
@@ -434,6 +420,8 @@ if __name__ == "__main__":
     print("Inside Main")
     #warm up
     init_gpu()
+
+    
     
     print("Test Kmeans")
     test_kmeans_detailed()
