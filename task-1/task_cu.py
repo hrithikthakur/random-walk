@@ -147,49 +147,38 @@ def our_ann(N, D, A, X, K, distance_func):
     X_gpu = cp.asarray(X)
     M = X_gpu.shape[0]
     
-    # CHANGE THESE VALUES TO INCREASE RECALL:
-    num_clusters = min(200, int(cp.sqrt(N) * 2))  # More clusters than before
-    K1 = min(8, num_clusters)                    # Check 8 clusters instead of 4
-    K2 = min(3000, N//5)                        # Check more candidates per cluster
     
-    # Run k-means clustering with proper number of clusters
+    num_clusters = min(200, int(cp.sqrt(N) * 2))
+    K1 = min(8, num_clusters)
+    K2 = min(3000, N//5)
+    
     centroids = cp.asarray(our_kmeans(N, D, A_gpu, num_clusters, distance_func))
     
-    # Find cluster assignments for all points
     all_distances = distance_func(A_gpu, centroids)
     cluster_labels = cp.argmin(all_distances, axis=1)
     
-    # Find closest clusters for each query
     query_distances = distance_func(X_gpu, centroids)
     closest_clusters = cp.argsort(query_distances, axis=1)[:, :K1]
     
-    # Process each query with more thorough search
     results = []
     for i in range(M):
-        x = X_gpu[i:i+1]  # Keep as 2D array
+        x = X_gpu[i:i+1]
         clusters = closest_clusters[i]
         
-        # Collect candidates from each cluster
         candidates = []
         for c in clusters:
-            # Get points that belong to this cluster
             cluster_indices = cp.where(cluster_labels == c)[0]
             if len(cluster_indices) == 0:
                 continue
-                
-            # Calculate distances to all points in cluster
-            cluster_points = A_gpu[cluster_indices]
-            dists = distance_func(x, cluster_points)[0]  # Get first row
             
-            # Get K2 nearest points in this cluster
+            cluster_points = A_gpu[cluster_indices]
+            dists = distance_func(x, cluster_points)[0]
+            
             nearest_indices = cp.argsort(dists)[:K2]
             
-            # Add original indices to candidates
             candidates.extend(cluster_indices[nearest_indices].get().tolist())
             
-        # If we don't have enough candidates, check more clusters
         if len(candidates) < K * 5:
-            # Get more clusters beyond the K1 we already checked
             more_clusters = cp.argsort(query_distances[i])[K1:K1+5]
             for c in more_clusters:
                 cluster_indices = cp.where(cluster_labels == c)[0]
@@ -198,13 +187,12 @@ def our_ann(N, D, A, X, K, distance_func):
                 
                 cluster_points = A_gpu[cluster_indices]
                 dists = distance_func(x, cluster_points)[0]
-                nearest_indices = cp.argsort(dists)[:K2//2]  # Use fewer candidates for extra clusters
+                nearest_indices = cp.argsort(dists)[:K2//2]
                 candidates.extend(cluster_indices[nearest_indices].get().tolist())
                 
                 if len(candidates) >= K * 10:
                     break
         
-        # If we have candidates, find K nearest among them
         if candidates:
             candidates = cp.array(candidates)
             candidate_points = A_gpu[candidates]
@@ -212,7 +200,6 @@ def our_ann(N, D, A, X, K, distance_func):
             final_indices = candidates[cp.argsort(final_dists)[:K]]
             results.append(final_indices)
         else:
-            # Fallback to basic search
             dists = distance_func(x, A_gpu)[0]
             results.append(cp.argsort(dists)[:K])
     
