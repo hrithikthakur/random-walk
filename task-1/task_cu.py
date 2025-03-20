@@ -137,21 +137,37 @@ def our_ann_lsh(N, D, A, X, K, distance_func):
     return cp.asnumpy(final_indices)
 
 
-# Euclidean distance function
-def euclidean_distance(a, b):
-    return cp.linalg.norm(a - b, axis=1)
 
-# Mock k-means function (returns random centroids for illustration)
+
 def our_kmeans(N, D, A, K, distance_func):
-    # Just return random points as centroids for simplicity
-    return A[:K]
-
-# Example data
-N = 10  # Number of points in the dataset
-D = 2   # Dimension of each point
-K = 3   # Number of clusters
-A = cp.array([[1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11]])  # Dataset (10 points)
-X = cp.array([[3, 3], [6, 6], [9, 9]])  # Query points (3 points)
+    if A.shape[0] != N or A.shape[1] != D:
+        raise ValueError(f"Matrix A should have shape ({N}, {D}), but got {A.shape}")
+    if K > N:
+        raise ValueError(f"Cannot create {K} clusters with only {N} points")
+    
+    A = cp.asarray(A)
+    centroids = A[cp.random.choice(N, K, replace=False)]
+    max_iterations = 100
+    prev_centroids = None
+    
+    for _ in range(max_iterations):
+        distances = distance_func(A, centroids)
+        labels = cp.argmin(distances, axis=1)
+        new_centroids = cp.zeros_like(centroids)
+        for k in range(K):
+            mask = (labels == k)
+            if cp.any(mask):
+                new_centroids[k] = cp.mean(A[mask], axis=0)
+            else:
+                new_centroids[k] = centroids[k]
+        
+        if prev_centroids is not None and cp.allclose(new_centroids, prev_centroids):
+            break
+            
+        prev_centroids = new_centroids.copy()
+        centroids = new_centroids
+    
+    return cp.asnumpy(centroids)
 
 # Running the ANN function
 def our_ann(N, D, A, X, K, distance_func):
